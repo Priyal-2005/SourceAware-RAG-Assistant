@@ -1,8 +1,9 @@
 """
-RAG Research Assistant — Phase 1 + Phase 2
+RAG Research Assistant — Phase 1 + 2 + 3
 ==========================================
 Phase 1: Upload PDF documents and extract text with source attribution.
 Phase 2: Chunk text, generate embeddings, build FAISS index, persist locally.
+Phase 3: Query documents via semantic search and display source-attributed results.
 
 This module handles:
   • Multi-file PDF upload via Streamlit sidebar
@@ -12,10 +13,13 @@ This module handles:
   • [Phase 2] Text chunking with LangChain RecursiveCharacterTextSplitter
   • [Phase 2] Embedding generation with HuggingFace all-MiniLM-L6-v2
   • [Phase 2] FAISS vector store creation and local persistence
+  • [Phase 3] Semantic query → embedding → FAISS similarity search
+  • [Phase 3] Source-attributed result display with similarity scores
 """
 
 import json
 import os
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -244,6 +248,132 @@ def load_index(embeddings):
 
 
 # ──────────────────────────────────────────────
+# Phase 3 — Query & Retrieval
+# ──────────────────────────────────────────────
+
+def search_documents(query: str, vector_store, top_k: int) -> list[dict]:
+    """
+    Search the FAISS index for chunks most similar to the user's query.
+
+    How it works:
+      1. The query string is converted into a 384-dim embedding vector
+         using the same all-MiniLM-L6-v2 model that was used to embed
+         the document chunks.
+      2. FAISS computes the L2 (Euclidean) distance between the query
+         vector and every stored chunk vector.
+      3. The top_k closest vectors are returned, along with their
+         metadata (doc_name, page) and distance scores.
+
+    Score interpretation:
+      FAISS returns L2 distance — lower = more similar.  We convert
+      this to a 0–1 similarity score:  similarity = 1 / (1 + distance)
+      so that higher values = better match (more intuitive for users).
+
+    Returns a list of dicts:
+        {"text": str, "doc_name": str, "page": int, "score": float}
+    """
+    try:
+        # similarity_search_with_score returns (Document, distance) tuples
+        raw_results = vector_store.similarity_search_with_score(query, k=top_k)
+    except Exception as exc:
+        st.error(f"❌ Search failed.\n\n`{exc}`")
+        return []
+
+    results = []
+    for doc, distance in raw_results:
+        # Convert L2 distance → similarity score (0–1, higher = better)
+        similarity = 1.0 / (1.0 + distance)
+
+        results.append({
+            "text": doc.page_content,
+            "doc_name": doc.metadata.get("doc_name", "Unknown"),
+            "page": doc.metadata.get("page", 0),
+            "score": round(similarity, 4),
+        })
+
+    return results
+
+
+def highlight_query_terms(text: str, query: str) -> str:
+    """
+    Wrap query terms in the text with **bold** markers for visibility.
+
+    Uses case-insensitive word matching.  This is a simple string-level
+    highlight — not semantic — but helps users quickly spot why a chunk
+    was retrieved.
+    """
+    # Split query into individual words, ignore short/common words
+    terms = [t for t in query.split() if len(t) > 2]
+
+    highlighted = text
+    for term in terms:
+        # Case-insensitive replacement, preserve original casing
+        pattern = re.compile(re.escape(term), re.IGNORECASE)
+        highlighted = pattern.sub(lambda m: f"**{m.group()}**", highlighted)
+
+    return highlighted
+
+
+def display_results(results: list[dict], query: str):
+    """
+    Render search results in the Streamlit UI.
+
+    Each result is shown inside an expander with:
+      • Source attribution (document name + page number)
+      • Similarity score
+      • Text preview (first 500 chars) with query terms highlighted
+      • Full text available via expansion
+    """
+    st.markdown(f"### 🎯 Top {len(results)} Matching Results")
+
+    for rank, result in enumerate(results, start=1):
+        doc_name = result["doc_name"]
+        page = result["page"]
+        score = result["score"]
+        text = result["text"]
+
+        # Score label for quick readability
+        if score >= 0.6:
+            score_label = "🟢 High"
+        elif score >= 0.4:
+            score_label = "🟡 Medium"
+        else:
+            score_label = "🔴 Low"
+
+        with st.expander(
+            f"Result #{rank}  —  📄 {doc_name}  |  📍 Page {page}  |  "
+            f"📊 {score:.2f} ({score_label})",
+            expanded=(rank <= 2),  # auto-expand top 2 results
+        ):
+            # Source attribution header
+            st.markdown(
+                f"**📄 Document:** `{doc_name}`  \n"
+                f"**📍 Page:** {page}  \n"
+                f"**📊 Similarity Score:** {score:.4f}  ({score_label})"
+            )
+
+            st.divider()
+
+            # Preview with highlighted query terms
+            preview = text[:500]
+            is_truncated = len(text) > 500
+            highlighted_preview = highlight_query_terms(preview, query)
+
+            st.markdown("**Preview:**")
+            st.markdown(highlighted_preview + ("…" if is_truncated else ""))
+
+            if is_truncated:
+                st.markdown("**Full chunk text:**")
+                st.text_area(
+                    "Full text",
+                    value=text,
+                    height=250,
+                    disabled=True,
+                    key=f"search_full_{doc_name}_{page}_{rank}",
+                )
+
+
+# ──────────────────────────────────────────────
 # Main app
 # ──────────────────────────────────────────────
 
@@ -256,8 +386,8 @@ def main():
     )
 
     # --- Title ---
-    st.title("📄 RAG Research Assistant (Phase 1 + 2)")
-    st.markdown("**Upload documents, extract text, and build a searchable vector index.**")
+    st.title("📄 RAG Research Assistant (Phase 1 + 2 + 3)")
+    st.markdown("**Upload documents, build a vector index, and search with source attribution.**")
 
     # --- Sidebar ---
     with st.sidebar:
@@ -291,14 +421,14 @@ def main():
 
         st.divider()
 
-        # Placeholder for Phase 3
+        # Phase 3 — Retrieval settings
         st.header("🔍 Retrieval Settings")
         top_k = st.slider(
-            "Top-K results (for future use)",
+            "Top-K results",
             min_value=1,
-            max_value=20,
+            max_value=10,
             value=5,
-            help="Number of most similar chunks to retrieve. Used in Phase 3.",
+            help="Number of most similar chunks to retrieve when searching.",
         )
 
     # ── Try to load a previously saved index on startup ──
@@ -417,6 +547,73 @@ def main():
             f"**Current index:** {len(stored_chunks)} chunks across "
             f"{len(chunk_stats)} document(s)"
         )
+
+    st.divider()
+
+    # ══════════════════════════════════════════════
+    # Phase 3 — Query & Search
+    # ══════════════════════════════════════════════
+
+    st.subheader("🔍 Phase 3 — Search Your Documents")
+
+    # Check whether an index is available for searching
+    index_ready = (
+        "vector_store" in st.session_state
+        and st.session_state["vector_store"] is not None
+    )
+
+    if not index_ready:
+        st.warning(
+            "⚠️ No vector index found. Upload PDFs and click "
+            "**⚡ Process Documents** above before searching."
+        )
+    else:
+        # Query input
+        query = st.text_input(
+            "Ask a question about your documents",
+            placeholder="e.g. What are the key findings about climate change?",
+            key="search_query",
+        )
+
+        # Search and Clear buttons side by side
+        col_search, col_clear = st.columns([1, 1])
+        with col_search:
+            search_clicked = st.button(
+                "🔎 Search", type="primary", use_container_width=True
+            )
+        with col_clear:
+            clear_clicked = st.button(
+                "🗑️ Clear Results", use_container_width=True
+            )
+
+        # Handle clear
+        if clear_clicked:
+            st.session_state.pop("search_results", None)
+            st.session_state.pop("last_query", None)
+
+        # Handle search
+        if search_clicked:
+            if not query or not query.strip():
+                st.error("Please enter a question before searching.")
+            else:
+                with st.spinner("Searching documents..."):
+                    results = search_documents(
+                        query,
+                        st.session_state["vector_store"],
+                        top_k,
+                    )
+                    st.session_state["search_results"] = results
+                    st.session_state["last_query"] = query
+
+        # Display results (persisted across reruns via session_state)
+        if "search_results" in st.session_state:
+            results = st.session_state["search_results"]
+            last_query = st.session_state.get("last_query", "")
+
+            if not results:
+                st.info("No relevant results found. Try rephrasing your question.")
+            else:
+                display_results(results, last_query)
 
     st.divider()
 
