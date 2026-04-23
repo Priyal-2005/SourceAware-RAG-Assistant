@@ -1,1 +1,5 @@
 .env
+
+# ignore large PDFs but allow sample ones
+data/*
+!data/*.pdf
