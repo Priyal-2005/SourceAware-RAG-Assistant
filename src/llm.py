@@ -37,7 +37,13 @@ def get_api_key():
     return key
 
 # ── Model configuration ──
-DEFAULT_MODEL = "llama-3.1-70b-versatile"
+# Using llama3-8b-8192 as it is reliable and fast for RAG tasks.
+MODEL_NAME = "llama3-8b-8192"
+DEFAULT_MODEL = MODEL_NAME
+
+# ── Debug configuration ──
+# Set to True to see raw API errors. False for clean UI errors.
+DEBUG_MODE = False
 
 # ── Prompt templates ──
 # Why this template works:
@@ -261,10 +267,17 @@ def generate_answer(
             answer = warning + answer
 
     except Exception as exc:
+        # Feature 3: Debug Mode handling for fallback
+        if DEBUG_MODE:
+            error_msg = f"Groq API call failed (Debug): {exc}"
+        else:
+            error_msg = "LLM temporarily unavailable. Please try again."
+            
         return {
             "answer": None,
             "sources": [],
-            "error": f"Groq API call failed: {exc}",
+            "error": error_msg,
+            "confidence": confidence
         }
 
     # ── Step 5: Collect unique sources ──

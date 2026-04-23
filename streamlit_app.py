@@ -7,6 +7,10 @@ and document management in the sidebar.
 All core logic lives in the src/ package.
 """
 
+import os
+import io
+import glob
+import time
 import streamlit as st
 
 # ── Import core logic from src modules ──
@@ -77,28 +81,49 @@ def clear_chat():
 # Sidebar — document management & settings
 # ──────────────────────────────────────────────
 
+def get_api_key():
+    """Retrieve API key securely from secrets or environment."""
+    try:
+        if "GROQ_API_KEY" in st.secrets:
+            return st.secrets["GROQ_API_KEY"]
+    except Exception:
+        pass
+    return os.environ.get("GROQ_API_KEY")
+
+
 def render_sidebar():
     """
     Render the sidebar with upload, processing, and settings.
-    Returns (uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key).
+    Returns (uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode).
     """
     with st.sidebar:
-        st.header("📁 Documents")
-        st.caption("You can upload your own PDFs.")
-        uploaded_files = st.file_uploader(
-            "Upload PDF files",
-            type=["pdf"],
-            accept_multiple_files=True,
-        )
+        # ── Section 1: Documents ──
+        st.header("1. 📁 Documents")
+        use_sample = st.checkbox("Use sample documents")
+        
+        uploaded_files = []
+        if use_sample:
+            st.info("📚 **Loaded sample research papers:**\n- RAG paper\n- Transformer paper\n- LLaMA 2 paper\n- Climate report")
+            sample_paths = glob.glob("data/*.pdf")
+            for p in sample_paths:
+                with open(p, "rb") as f:
+                    b = io.BytesIO(f.read())
+                    b.name = os.path.basename(p)  # Assign name for pypdf
+                    uploaded_files.append(b)
+        else:
+            uploaded_files = st.file_uploader(
+                "Upload PDF files",
+                type=["pdf"],
+                accept_multiple_files=True,
+            )
 
         st.divider()
 
-        # ── Process button ──
-        st.header("🔧 Index")
-
+        # ── Section 2: Index ──
+        st.header("2. ⚡ Index")
         if st.button("⚡ Process Documents", type="primary", use_container_width=True):
             if not uploaded_files:
-                st.error("Upload PDFs first.")
+                st.error("Upload PDFs or check 'Use sample documents' first.")
             else:
                 process_documents(uploaded_files)
 
@@ -107,13 +132,14 @@ def render_sidebar():
             stored = st.session_state["chunks"]
             doc_count = len({c["doc_name"] for c in stored})
             st.caption(f"✅ {len(stored)} chunks · {doc_count} doc(s)")
+            st.success("Documents processed successfully")
         else:
-            st.caption("No index yet")
+            st.warning("No documents indexed yet")
 
         st.divider()
 
-        # ── Settings ──
-        st.header("⚙️ Settings")
+        # ── Section 3: Settings ──
+        st.header("3. ⚙️ Settings")
         chunk_size = st.slider(
             "Chunk size", 200, 1500, DEFAULT_CHUNK_SIZE, 50,
             help="Characters per chunk.",
@@ -129,19 +155,11 @@ def render_sidebar():
 
         st.divider()
 
-        # ── LLM ──
-        st.header("🤖 LLM")
-        groq_api_key = st.text_input(
-            "Groq API Key",
-            type="password",
-            placeholder="gsk_...",
-            help="Get a free key at console.groq.com",
-        )
-
-        st.divider()
-
-        # ── Chat controls ──
-        if st.button("🗑️ New Chat", use_container_width=True):
+        # ── Section 4: View Mode & Chat ──
+        st.header("4. 🗂️ View Mode")
+        compare_mode = st.checkbox("Compare Across Documents", help="Group retrieved chunks by document")
+        
+        if st.button("🗑️ Clear Chat", use_container_width=True):
             clear_chat()
             st.rerun()
 
@@ -169,7 +187,7 @@ def render_sidebar():
                         "reason": r.get("reason", "N/A")
                     })
 
-    return uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key, compare_mode
+    return uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode
 
 
 # ──────────────────────────────────────────────
@@ -242,10 +260,17 @@ def format_sources(sources: list[dict]) -> str:
     if not sources:
         return ""
 
-    lines = ["\n---", "**📚 Sources:**"]
+    lines = ["\n\nSources:"]
     for s in sources:
-        lines.append(f"- `{s['doc_name']}` — Page {s['page']}")
+        lines.append(f"- {s['doc_name']} (Page {s['page']})")
     return "\n".join(lines)
+
+
+def stream_text(text: str, delay: float = 0.02):
+    """Yield text chunk by chunk for a ChatGPT-like typewriter effect."""
+    for word in text.split(" "):
+        yield word + " "
+        time.sleep(delay)
 
 
 # ──────────────────────────────────────────────
@@ -273,30 +298,74 @@ def main():
         st.session_state["index_loaded"] = True
 
     # ── Sidebar ──
-    uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key, compare_mode = render_sidebar()
+    uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode = render_sidebar()
+    groq_api_key = get_api_key()
+
+    # ── Custom CSS for UI Improvements ──
+    st.markdown(
+        """
+        <style>
+        .stChatMessage[data-testid="stChatMessage"][aria-label="assistant"] {
+            background-color: #1E1E2E;
+            border-left: 4px solid #BB86FC;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .main-header {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: -1rem;
+        }
+        .sub-header {
+            font-size: 1.2rem;
+            color: #A0A0A0;
+            margin-bottom: 1rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     # ── Main area — Title ──
-    st.title("🔍 SourceAware RAG Assistant")
-    st.caption("Upload documents, ask questions, get answers with source attribution.")
+    st.markdown('<div class="main-header">SourceAware RAG Assistant</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">AI-powered document search with source attribution</div>', unsafe_allow_html=True)
+    st.divider()
 
     # ── Status indicators ──
     index_ready = st.session_state["vector_store"] is not None
     has_api_key = bool(groq_api_key)
 
     if not index_ready:
-        st.info("👈 Upload PDFs and click **⚡ Process Documents** in the sidebar to get started.")
-
-    if index_ready and not has_api_key:
-        st.warning("💡 Enter your Groq API key in the sidebar to enable AI answers.")
+        st.info("### Get Started:\n1. Upload PDFs OR use sample docs in the sidebar.\n2. Click **⚡ Process Documents**.\n3. Ask questions below!")
+    elif not has_api_key:
+        st.error("LLM not configured. Please contact developer or ensure GROQ_API_KEY is set in environment.")
 
     # ── Render chat history ──
     render_chat_history()
 
+    # ── Feature 3 & 4: Empty State & Example Queries ──
+    if index_ready and not st.session_state["chat_history"]:
+        with st.container():
+            st.info("💡 **Try asking:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("📄 Summarize Document", use_container_width=True):
+                    st.session_state["preset_query"] = "Summarize the key points of the documents."
+            with col2:
+                if st.button("🔑 Key Findings", use_container_width=True):
+                    st.session_state["preset_query"] = "What are the key findings or main conclusions?"
+            with col3:
+                if st.button("👶 Explain Like I'm Beginner", use_container_width=True):
+                    st.session_state["preset_query"] = "Explain the core concepts in these documents simply, as if I am a beginner."
+
     # ── Chat input ──
+    preset = st.session_state.pop("preset_query", None)
     user_query = st.chat_input(
         "Ask something about your documents...",
         disabled=(not index_ready),
     )
+    if preset:
+        user_query = preset
 
     if user_query and index_ready:
         # Display user message immediately
@@ -339,7 +408,7 @@ def main():
         else:
             # ── Generate LLM answer with conversation memory ──
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
+                with st.spinner("Generating answer..."):
                     answer_data = generate_answer(
                         query=user_query,
                         retrieved_chunks=results,
@@ -352,10 +421,12 @@ def main():
                     response = f"⚠️ {answer_data['error']}"
                     st.error(response)
                 else:
-                    # Display answer + sources
+                    # Display answer + sources in a clean format
                     sources_str = format_sources(answer_data["sources"])
-                    response = answer_data["answer"] + sources_str
-                    st.markdown(response)
+                    response = "**Answer:**\n" + answer_data["answer"] + sources_str
+                    
+                    # ── Feature 5: Streaming Response ──
+                    st.write_stream(stream_text(response))
 
                     # ── Feature 4: Multi-Document Comparison Mode Display ──
                     with st.expander("📄 View Retrieved Context", expanded=compare_mode):
