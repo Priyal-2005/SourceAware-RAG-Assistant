@@ -1,0 +1,9 @@
+# Phase 1
+streamlit==1.29.0
+pypdf==3.17.4
+
+# Phase 2 — Chunking, Embeddings, Vector Store
+langchain
+langchain-community
+faiss-cpu
+sentence-transformers
