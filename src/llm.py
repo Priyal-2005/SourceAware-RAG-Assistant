@@ -200,7 +200,19 @@ def generate_answer(
             "answer": None,
             "sources": [],
             "error": "No context available — please process documents and search first.",
+            "confidence": "no context"
         }
+
+    # ── Feature 2: Confidence Detection ──
+    # Why thresholding matters: if the best retrieved chunk has a low score,
+    # the LLM is likely to answer "I don't know" or hallucinate.
+    top_score = max(chunk.get("score", 0) for chunk in retrieved_chunks)
+    if top_score < 0.4:
+        confidence = "low"
+    elif top_score < 0.7:
+        confidence = "medium"
+    else:
+        confidence = "high"
 
     # ── Step 1: Build context ──
     context = _build_context(retrieved_chunks)
@@ -243,6 +255,11 @@ def generate_answer(
 
         answer = response.choices[0].message.content
 
+        # Feature 2 (cont): Prepend warning if low confidence
+        if confidence == "low":
+            warning = "⚠️ *This answer may be unreliable due to low context relevance.* \n\n"
+            answer = warning + answer
+
     except Exception as exc:
         return {
             "answer": None,
@@ -263,4 +280,5 @@ def generate_answer(
         "answer": answer,
         "sources": sources,
         "error": None,
+        "confidence": confidence
     }

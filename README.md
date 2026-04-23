@@ -134,3 +134,13 @@ The repository includes four sample research papers in the `data/` directory. Yo
 ## Why This Project Matters
 
 As Large Language Models become more common in enterprise environments, the risk of "hallucination" (models inventing facts) remains a critical bottleneck. Retrieval-Augmented Generation solves this by restricting the model's knowledge to a verified corpus of documents. This project demonstrates a production-style RAG architecture where source attribution is a first-class citizen, ensuring that users do not have to blindly trust the AI—they can immediately verify the source of the claim themselves.
+
+## Limitations
+- Retrieval quality depends on chunking strategy and embedding model
+- LLM responses are constrained to retrieved context and may miss implicit information
+- Performance may degrade on scanned PDFs (no OCR)
+
+## Future Work
+- Hybrid search (keyword + semantic)
+- Multi-modal support (tables/images)
+- Re-ranking models for improved retrieval accuracy

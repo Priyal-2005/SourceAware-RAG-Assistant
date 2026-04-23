@@ -145,7 +145,31 @@ def render_sidebar():
             clear_chat()
             st.rerun()
 
-    return uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key
+        st.divider()
+
+        # ── Feature 4: Compare Mode Toggle ──
+        st.header("🗂️ View Mode")
+        compare_mode = st.checkbox("Compare Across Documents", help="Group retrieved chunks by document")
+
+        # ── Feature 3: Query Debug Panel ──
+        if "last_query" in st.session_state and "last_results" in st.session_state:
+            with st.expander("🔍 Debug Panel"):
+                st.write("**Query:**", st.session_state["last_query"])
+                if "last_confidence" in st.session_state:
+                    conf = st.session_state["last_confidence"]
+                    st.write("**Confidence:**", conf.upper())
+                
+                st.write("**Retrieved Context:**")
+                for i, r in enumerate(st.session_state["last_results"]):
+                    st.json({
+                        "rank": i+1,
+                        "doc": r["doc_name"],
+                        "page": r["page"],
+                        "score": r["score"],
+                        "reason": r.get("reason", "N/A")
+                    })
+
+    return uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key, compare_mode
 
 
 # ──────────────────────────────────────────────
@@ -249,7 +273,7 @@ def main():
         st.session_state["index_loaded"] = True
 
     # ── Sidebar ──
-    uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key = render_sidebar()
+    uploaded_files, chunk_size, chunk_overlap, top_k, groq_api_key, compare_mode = render_sidebar()
 
     # ── Main area — Title ──
     st.title("🔍 SourceAware RAG Assistant")
@@ -287,14 +311,19 @@ def main():
             results = retrieve_chunks(
                 user_query, st.session_state["vector_store"], top_k
             )
+            # Save for debug panel
+            st.session_state["last_query"] = user_query
+            st.session_state["last_results"] = results
 
         if not results:
             response = "I couldn't find any relevant information in your documents. Try rephrasing your question."
+            st.session_state["last_confidence"] = "no context"
             with st.chat_message("assistant"):
                 st.markdown(response)
             add_to_chat("assistant", response)
 
         elif not has_api_key:
+            st.session_state["last_confidence"] = "unknown (no API key)"
             # No API key — show retrieved chunks directly
             response_parts = ["**Retrieved chunks** (add Groq API key for AI answers):\n"]
             for i, r in enumerate(results, 1):
@@ -317,6 +346,7 @@ def main():
                         chat_history=st.session_state["chat_history"][:-1],  # exclude current query
                         api_key=groq_api_key,
                     )
+                    st.session_state["last_confidence"] = answer_data.get("confidence", "unknown")
 
                 if answer_data["error"]:
                     response = f"⚠️ {answer_data['error']}"
@@ -327,7 +357,27 @@ def main():
                     response = answer_data["answer"] + sources_str
                     st.markdown(response)
 
+                    # ── Feature 4: Multi-Document Comparison Mode Display ──
+                    with st.expander("📄 View Retrieved Context", expanded=compare_mode):
+                        if compare_mode:
+                            # Group by document
+                            grouped = {}
+                            for r in results:
+                                grouped.setdefault(r["doc_name"], []).append(r)
+                            
+                            for doc, chunks in grouped.items():
+                                st.markdown(f"**Document: `{doc}`**")
+                                for c in chunks:
+                                    st.markdown(f"- **Page {c['page']}** (Score: {c['score']:.2f}): {c['text'][:200]}...")
+                                st.divider()
+                        else:
+                            # Standard linear display
+                            for i, r in enumerate(results, 1):
+                                st.markdown(f"**{i}. `{r['doc_name']}` (Page {r['page']})** - Score: {r['score']:.2f}")
+                                st.markdown(f"> {r['text'][:200]}...")
+
             add_to_chat("assistant", response)
+            st.rerun()  # Rerun to update the debug panel immediately
 
 
 if __name__ == "__main__":
