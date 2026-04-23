@@ -39,13 +39,36 @@ def get_api_key():
 # ── Model configuration ──
 DEFAULT_MODEL = "llama-3.1-70b-versatile"
 
-# ── Prompt template ──
+# ── Prompt templates ──
 # Why this template works:
 #   1. "ONLY using the provided context" — prevents hallucination
 #   2. "If the answer is not present" — gives the model an explicit fallback
 #   3. Context is injected with source labels — so the model can cite them
-#   4. Clean separation of context / question / answer sections
-PROMPT_TEMPLATE = """You are a helpful AI research assistant.
+#   4. Chat history gives continuity for follow-up questions
+#   5. Clean separation of history / context / question / answer sections
+
+# Template WITH conversation history (for follow-up questions)
+PROMPT_WITH_HISTORY = """You are a helpful AI research assistant.
+
+Answer the question ONLY using the provided context.
+If the answer is not present in the context, say:
+"I don't know based on the provided documents."
+
+Always mention which document and page your answer comes from.
+
+Previous conversation:
+{chat_history}
+
+Context:
+{context}
+
+Question:
+{query}
+
+Answer:"""
+
+# Template WITHOUT history (first question in a conversation)
+PROMPT_NO_HISTORY = """You are a helpful AI research assistant.
 
 Answer the question ONLY using the provided context.
 If the answer is not present in the context, say:
@@ -106,9 +129,41 @@ def _get_groq_client(api_key: str | None = None) -> Groq | None:
     return Groq(api_key=key)
 
 
+def _format_chat_history(chat_history: list[dict], max_turns: int = 3) -> str:
+    """
+    Format recent chat history into a readable string for the prompt.
+
+    Why we limit to the last few turns:
+      LLM context windows are finite.  Including the entire conversation
+      would eat into the space available for document context.  The last
+      2–3 exchanges are usually enough for follow-up questions like
+      "tell me more about that" or "what about page 5?".
+
+    Args:
+        chat_history: List of {"role": "user"|"assistant", "content": str}.
+        max_turns:    Max Q&A pairs to include (default 3).
+
+    Returns:
+        Formatted string, or empty string if no history.
+    """
+    if not chat_history:
+        return ""
+
+    # Take the last N*2 messages (each turn = 1 user + 1 assistant)
+    recent = chat_history[-(max_turns * 2):]
+
+    lines = []
+    for msg in recent:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        lines.append(f"{role}: {msg['content']}")
+
+    return "\n".join(lines)
+
+
 def generate_answer(
     query: str,
     retrieved_chunks: list[dict],
+    chat_history: list[dict] | None = None,
     api_key: str | None = None,
     model: str = DEFAULT_MODEL,
 ) -> dict:
@@ -116,9 +171,10 @@ def generate_answer(
     Generate an LLM answer from retrieved chunks using Groq.
 
     Step 1: Build context string from retrieved chunks (with source labels).
-    Step 2: Fill the prompt template with context + query.
-    Step 3: Call Groq API to generate the answer.
-    Step 4: Return the answer + source metadata.
+    Step 2: Format recent chat history (if any).
+    Step 3: Fill the prompt template with history + context + query.
+    Step 4: Call Groq API to generate the answer.
+    Step 5: Return the answer + source metadata.
 
     Why we return sources separately:
       The UI can display a clean "Sources used" section below the answer,
@@ -128,6 +184,7 @@ def generate_answer(
         query:            The user's question.
         retrieved_chunks: List of {"text", "doc_name", "page", "score"} dicts
                           from the retrieval step.
+        chat_history:     Optional list of {"role", "content"} dicts for memory.
         api_key:          Optional Groq API key (falls back to env var).
         model:            Groq model identifier.
 
@@ -148,8 +205,14 @@ def generate_answer(
     # ── Step 1: Build context ──
     context = _build_context(retrieved_chunks)
 
-    # ── Step 2: Fill prompt ──
-    prompt = PROMPT_TEMPLATE.format(context=context, query=query)
+    # ── Step 2 & 3: Build prompt with or without history ──
+    history_str = _format_chat_history(chat_history or [])
+    if history_str:
+        prompt = PROMPT_WITH_HISTORY.format(
+            chat_history=history_str, context=context, query=query
+        )
+    else:
+        prompt = PROMPT_NO_HISTORY.format(context=context, query=query)
 
     # ── Step 3: Initialize Groq client ──
     client = _get_groq_client(api_key)
