@@ -103,13 +103,16 @@ def render_sidebar():
         
         uploaded_files = []
         if use_sample:
-            st.info("📚 **Loaded sample research papers:**\n- RAG paper\n- Transformer paper\n- LLaMA 2 paper\n- Climate report")
             sample_paths = glob.glob("data/*.pdf")
-            for p in sample_paths:
-                with open(p, "rb") as f:
-                    b = io.BytesIO(f.read())
-                    b.name = os.path.basename(p)  # Assign name for pypdf
-                    uploaded_files.append(b)
+            if not sample_paths:
+                st.warning("⚠️ No sample PDFs found in data/ folder.")
+            else:
+                st.info("📚 **Loaded sample research papers:**\n- RAG paper\n- Transformer paper\n- LLaMA 2 paper\n- Climate report")
+                for p in sample_paths:
+                    with open(p, "rb") as f:
+                        b = io.BytesIO(f.read())
+                        b.name = os.path.basename(p)  # Assign name for pypdf
+                        uploaded_files.append(b)
         else:
             uploaded_files = st.file_uploader(
                 "Upload PDF files",
@@ -164,10 +167,6 @@ def render_sidebar():
             st.rerun()
 
         st.divider()
-
-        # ── Feature 4: Compare Mode Toggle ──
-        st.header("🗂️ View Mode")
-        compare_mode = st.checkbox("Compare Across Documents", help="Group retrieved chunks by document")
 
         # ── Feature 3: Query Debug Panel ──
         if "last_query" in st.session_state and "last_results" in st.session_state:
@@ -338,7 +337,7 @@ def main():
     if not index_ready:
         st.info("### Get Started:\n1. Upload PDFs OR use sample docs in the sidebar.\n2. Click **⚡ Process Documents**.\n3. Ask questions below!")
     elif not has_api_key:
-        st.error("LLM not configured. Please contact developer or ensure GROQ_API_KEY is set in environment.")
+        st.warning("⚠️ LLM service not configured. Showing retrieved results only.")
 
     # ── Render chat history ──
     render_chat_history()
@@ -417,9 +416,14 @@ def main():
                     )
                     st.session_state["last_confidence"] = answer_data.get("confidence", "unknown")
 
-                if answer_data["error"]:
-                    response = f"⚠️ {answer_data['error']}"
-                    st.error(response)
+                if answer_data.get("error"):
+                    response = "⚠️ LLM temporarily unavailable. Showing retrieved results."
+                    st.warning(response)
+                    
+                    # Fallback display: Show retrieved chunks directly
+                    for i, r in enumerate(results, 1):
+                        st.markdown(f"**{i}. `{r['doc_name']}` (Page {r['page']})** - Score: {r['score']:.2f}")
+                        st.markdown(f"> {r['text'][:200]}...")
                 else:
                     # Display answer + sources in a clean format
                     sources_str = format_sources(answer_data["sources"])
@@ -448,7 +452,6 @@ def main():
                                 st.markdown(f"> {r['text'][:200]}...")
 
             add_to_chat("assistant", response)
-            st.rerun()  # Rerun to update the debug panel immediately
 
 
 if __name__ == "__main__":
