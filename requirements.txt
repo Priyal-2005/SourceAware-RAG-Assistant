@@ -1,9 +1,10 @@
 # Phase 1
-streamlit==1.29.0
-pypdf==3.17.4
+streamlit>=1.38.0
+pypdf>=3.17.0
 
 # Phase 2 — Chunking, Embeddings, Vector Store
-langchain
-langchain-community
+langchain-text-splitters>=0.2.0
+langchain-community>=0.2.0,<0.4.0
+langchain-core>=0.2.0,<0.4.0
 faiss-cpu
 sentence-transformers

@@ -21,14 +21,12 @@ from pathlib import Path
 import streamlit as st
 from pypdf import PdfReader
 
-# ── Phase 2 imports ──
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-# ──────────────────────────────────────────────
+
 # Constants
-# ──────────────────────────────────────────────
 
 # Directory where FAISS index + metadata are persisted between sessions
 VECTOR_STORE_DIR = Path("./vector_store")
