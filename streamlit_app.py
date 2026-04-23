@@ -13,6 +13,7 @@ from src.chunking import chunk_documents, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVER
 from src.embeddings import load_embedding_model
 from src.vector_store import build_faiss_index, save_index, load_index
 from src.retrieval import retrieve_chunks, highlight_query_terms
+from src.llm import generate_answer
 
 
 # ──────────────────────────────────────────────
@@ -117,6 +118,17 @@ def main():
             "Top-K results",
             min_value=1, max_value=10, value=5,
             help="Number of most similar chunks to retrieve when searching.",
+        )
+
+        st.divider()
+
+        # Phase 4 — LLM settings
+        st.header("🤖 LLM Settings")
+        groq_api_key = st.text_input(
+            "Groq API Key",
+            type="password",
+            help="Enter your Groq API key. Get one free at console.groq.com.",
+            placeholder="gsk_...",
         )
 
     # ═══════════════════════════════════════════
@@ -237,6 +249,7 @@ def main():
         if clear_clicked:
             st.session_state.pop("search_results", None)
             st.session_state.pop("last_query", None)
+            st.session_state.pop("llm_answer", None)
 
         if search_clicked:
             if not query or not query.strip():
@@ -246,14 +259,50 @@ def main():
                     results = retrieve_chunks(query, st.session_state["vector_store"], top_k)
                     st.session_state["search_results"] = results
                     st.session_state["last_query"] = query
+                    st.session_state.pop("llm_answer", None)  # clear old answer on new search
 
+                # ── Phase 4: Auto-generate answer after retrieval ──
+                if results and groq_api_key:
+                    with st.spinner("🤖 Generating answer..."):
+                        answer_data = generate_answer(
+                            query, results, api_key=groq_api_key
+                        )
+                        st.session_state["llm_answer"] = answer_data
+
+        # ═══════════════════════════════════════════
+        # Phase 4 — LLM Answer
+        # ═══════════════════════════════════════════
+        if "llm_answer" in st.session_state:
+            answer_data = st.session_state["llm_answer"]
+
+            st.subheader("💡 Answer")
+
+            if answer_data["error"]:
+                st.error(f"LLM error: {answer_data['error']}")
+            else:
+                st.markdown(answer_data["answer"])
+
+                # Show sources used
+                if answer_data["sources"]:
+                    st.markdown("---")
+                    st.markdown("**📚 Sources used:**")
+                    for src in answer_data["sources"]:
+                        st.markdown(f"- `{src['doc_name']}` — Page {src['page']}")
+
+        elif "search_results" in st.session_state and st.session_state["search_results"] and not groq_api_key:
+            st.info("💡 Enter your Groq API key in the sidebar to generate AI answers.")
+
+        st.divider()
+
+        # ── Retrieved chunks (collapsible) ──
         if "search_results" in st.session_state:
             results = st.session_state["search_results"]
             last_query = st.session_state.get("last_query", "")
             if not results:
                 st.info("No relevant results found. Try rephrasing your question.")
             else:
-                display_results(results, last_query)
+                with st.expander("📄 View Retrieved Chunks", expanded=False):
+                    display_results(results, last_query)
 
     st.divider()
 
