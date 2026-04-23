@@ -14,7 +14,7 @@ from src.pdf_processing import extract_text_from_pdfs
 from src.chunking import chunk_documents, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 from src.embeddings import load_embedding_model
 from src.vector_store import build_faiss_index, save_index, load_index
-from src.retrieval import retrieve_chunks, highlight_query_terms
+from src.retrieval import retrieve_chunks
 from src.llm import generate_answer
 
 # ── Constants ──
@@ -84,6 +84,7 @@ def render_sidebar():
     """
     with st.sidebar:
         st.header("📁 Documents")
+        st.caption("You can upload your own PDFs.")
         uploaded_files = st.file_uploader(
             "Upload PDF files",
             type=["pdf"],

@@ -13,7 +13,6 @@ Score conversion:
   We convert to:  similarity = 1 / (1 + distance)  →  0–1 scale, higher = better.
 """
 
-import re
 
 
 def retrieve_chunks(query: str, vector_store, top_k: int = 5) -> list[dict]:
@@ -39,16 +38,3 @@ def retrieve_chunks(query: str, vector_store, top_k: int = 5) -> list[dict]:
         })
 
     return results
-
-
-def highlight_query_terms(text: str, query: str) -> str:
-    """
-    Bold-highlight query terms in text for visual emphasis.
-    Skips words shorter than 3 characters.
-    """
-    terms = [t for t in query.split() if len(t) > 2]
-    highlighted = text
-    for term in terms:
-        pattern = re.compile(re.escape(term), re.IGNORECASE)
-        highlighted = pattern.sub(lambda m: f"**{m.group()}**", highlighted)
-    return highlighted
