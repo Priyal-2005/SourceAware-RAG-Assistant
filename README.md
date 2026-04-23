@@ -54,6 +54,10 @@ SourceAware-RAG-Assistant/
 ├── .env                      # Environment variables (not tracked in git)
 ├── .env.example              # Example environment template
 ├── data/                     # Directory for sample or local PDF files
+│   ├── climate_report.pdf    # Sample: Climate change impacts
+│   ├── llama2_paper.pdf      # Sample: LLaMA 2 research paper
+│   ├── rag_paper.pdf         # Sample: Retrieval-Augmented Generation paper
+│   └── transformer_paper.pdf # Sample: "Attention Is All You Need"
 ├── vector_store/             # Persisted FAISS index and metadata (auto-generated)
 └── src/                      # Core logic modules
     ├── __init__.py
@@ -105,11 +109,13 @@ The application requires a Groq API key for LLM generation.
 
 ## Example Usage
 
-Once the application is running and documents are indexed, try asking:
-- "What are the main conclusions of this report?"
-- "Summarize the methodology detailed on page 4."
-- "What were the financial results for Q3?"
-- "Can you elaborate on your previous answer?" (Testing conversation memory)
+The repository includes four sample research papers in the `data/` directory. You can upload them via the sidebar, click **⚡ Process Documents**, and try asking:
+
+- **RAG Paper:** "What is the difference between RAG-Sequence and RAG-Token models?"
+- **Transformer Paper:** "How does multi-head attention work according to the authors?"
+- **LLaMA 2 Paper:** "What were the primary safety alignment techniques used for LLaMA 2-Chat?"
+- **Climate Report:** "Summarize the major economic impacts mentioned in the climate report."
+- **Follow-up Memory Test:** "Can you elaborate on your previous answer and explain the limitations?"
 
 ## Limitations
 
