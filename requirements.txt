@@ -11,3 +11,4 @@ sentence-transformers
 
 # Phase 4 — LLM
 groq
+python-dotenv==1.0.0

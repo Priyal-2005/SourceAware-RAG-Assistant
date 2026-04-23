@@ -23,7 +23,18 @@ Why a strict prompt?
 
 import os
 from groq import Groq
+from dotenv import load_dotenv
+load_dotenv()
 
+# GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# if not GROQ_API_KEY:
+#     raise ValueError("GROQ_API_KEY not found. Check your .env file")
+
+def get_api_key():
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        raise ValueError("Missing GROQ_API_KEY")
+    return key
 
 # ── Model configuration ──
 DEFAULT_MODEL = "llama-3.1-70b-versatile"
