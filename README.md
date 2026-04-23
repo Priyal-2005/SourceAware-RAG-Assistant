@@ -144,3 +144,6 @@ As Large Language Models become more common in enterprise environments, the risk
 - Hybrid search (keyword + semantic)
 - Multi-modal support (tables/images)
 - Re-ranking models for improved retrieval accuracy
+
+# Deployed Link (Streamlit)
+https://sourceaware-rag-assistant.streamlit.app/
