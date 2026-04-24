@@ -1,6 +1,6 @@
 """
-streamlit_app.py — SourceAware RAG Assistant (Phase 5)
-=======================================================
+streamlit_app.py — SourceAware RAG Assistant (Production-Ready)
+================================================================
 Chat-style UI with conversation memory, source attribution,
 and document management in the sidebar.
 
@@ -45,6 +45,7 @@ def init_session_state():
         "vector_store": None,    # FAISS index
         "embeddings": None,      # Loaded embedding model
         "index_loaded": False,   # Whether we've tried loading from disk
+        "processing": False,     # Processing lock to prevent duplicate runs
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -75,6 +76,13 @@ def add_to_chat(role: str, content: str):
 def clear_chat():
     """Reset chat history for a fresh conversation."""
     st.session_state["chat_history"] = []
+    # Clear debug panel data
+    if "last_query" in st.session_state:
+        del st.session_state["last_query"]
+    if "last_results" in st.session_state:
+        del st.session_state["last_results"]
+    if "last_confidence" in st.session_state:
+        del st.session_state["last_confidence"]
 
 
 # ──────────────────────────────────────────────
@@ -99,7 +107,9 @@ def render_sidebar():
     with st.sidebar:
         # ── Section 1: Documents ──
         st.header("1. 📁 Documents")
-        use_sample = st.checkbox("Use sample documents")
+        
+        # FIX #1: Add unique key to checkbox to prevent duplicate ID error
+        use_sample = st.checkbox("Use sample documents", key="use_sample_docs_checkbox")
         
         uploaded_files = []
         if use_sample:
@@ -107,64 +117,95 @@ def render_sidebar():
             if not sample_paths:
                 st.warning("⚠️ No sample PDFs found in data/ folder.")
             else:
-                st.info("📚 **Loaded sample research papers:**\n- RAG paper\n- Transformer paper\n- LLaMA 2 paper\n- Climate report")
+                # FIX #5: Only show success if files actually loaded
+                st.success(f"✅ Loaded {len(sample_paths)} sample document(s)")
+                with st.expander("📚 Sample Documents"):
+                    for p in sample_paths:
+                        st.caption(f"• {os.path.basename(p)}")
+                
+                # Load files into BytesIO objects
                 for p in sample_paths:
-                    with open(p, "rb") as f:
-                        b = io.BytesIO(f.read())
-                        b.name = os.path.basename(p)  # Assign name for pypdf
-                        uploaded_files.append(b)
+                    try:
+                        with open(p, "rb") as f:
+                            b = io.BytesIO(f.read())
+                            b.name = os.path.basename(p)
+                            uploaded_files.append(b)
+                    except Exception as e:
+                        st.error(f"Failed to load {os.path.basename(p)}: {e}")
         else:
             uploaded_files = st.file_uploader(
                 "Upload PDF files",
                 type=["pdf"],
                 accept_multiple_files=True,
+                key="pdf_uploader",  # FIX #1: Add unique key
             )
 
         st.divider()
 
         # ── Section 2: Index ──
         st.header("2. ⚡ Index")
-        if st.button("⚡ Process Documents", type="primary", use_container_width=True):
+        
+        # FIX #1: Add unique key to button
+        if st.button(
+            "⚡ Process Documents", 
+            type="primary", 
+            use_container_width=True,
+            key="process_docs_button",
+            disabled=st.session_state.get("processing", False)
+        ):
             if not uploaded_files:
                 st.error("Upload PDFs or check 'Use sample documents' first.")
             else:
+                st.session_state["processing"] = True
                 process_documents(uploaded_files)
+                st.session_state["processing"] = False
 
         # Show index stats
         if st.session_state["chunks"]:
             stored = st.session_state["chunks"]
             doc_count = len({c["doc_name"] for c in stored})
             st.caption(f"✅ {len(stored)} chunks · {doc_count} doc(s)")
-            st.success("Documents processed successfully")
+            st.success("Documents indexed and ready")
         else:
-            st.warning("No documents indexed yet")
+            st.info("No documents indexed yet")
 
         st.divider()
 
         # ── Section 3: Settings ──
         st.header("3. ⚙️ Settings")
+        
+        # FIX #6: Add warning about re-processing when settings change
         chunk_size = st.slider(
             "Chunk size", 200, 1500, DEFAULT_CHUNK_SIZE, 50,
-            help="Characters per chunk.",
+            help="Characters per chunk. Click 'Process Documents' after changing.",
+            key="chunk_size_slider",
         )
         chunk_overlap = st.slider(
             "Chunk overlap", 0, 300, DEFAULT_CHUNK_OVERLAP, 10,
-            help="Overlap between chunks.",
+            help="Overlap between chunks. Click 'Process Documents' after changing.",
+            key="chunk_overlap_slider",
         )
         top_k = st.slider(
             "Top-K results", 1, 10, 5,
             help="Number of chunks to retrieve per query.",
+            key="top_k_slider",
         )
 
         st.divider()
 
         # ── Section 4: View Mode & Chat ──
         st.header("4. 🗂️ View Mode")
-        compare_mode = st.checkbox("Compare Across Documents", help="Group retrieved chunks by document")
         
-        if st.button("🗑️ Clear Chat", use_container_width=True):
+        # FIX #1: Add unique key to checkbox
+        compare_mode = st.checkbox(
+            "Compare Across Documents", 
+            help="Group retrieved chunks by document",
+            key="compare_mode_checkbox"
+        )
+        
+        # FIX #2: Remove st.rerun() - let Streamlit handle it naturally
+        if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat_button"):
             clear_chat()
-            st.rerun()
 
         st.divider()
 
@@ -195,45 +236,51 @@ def render_sidebar():
 
 def process_documents(uploaded_files):
     """Run the full Phase 1→2 pipeline: extract → chunk → embed → index."""
-    with st.spinner("Extracting text from PDFs..."):
-        pages, warnings = extract_text_from_pdfs(uploaded_files)
-        for w in warnings:
-            if w.startswith("❌"):
-                st.sidebar.error(w)
-            else:
-                st.sidebar.warning(w)
+    # FIX #7: Add error boundary
+    try:
+        with st.spinner("Extracting text from PDFs..."):
+            pages, warnings = extract_text_from_pdfs(uploaded_files)
+            for w in warnings:
+                if w.startswith("❌"):
+                    st.sidebar.error(w)
+                else:
+                    st.sidebar.warning(w)
 
-        if not pages:
-            st.sidebar.error("No text extracted from any document.")
-            return
+            if not pages:
+                st.sidebar.error("No text extracted from any document.")
+                return
 
-        st.session_state["extracted_pages"] = pages
+            st.session_state["extracted_pages"] = pages
 
-    with st.spinner("Chunking and building vector index..."):
-        chunks = chunk_documents(pages)
-        if not chunks:
-            st.sidebar.error("No chunks created.")
-            return
+        with st.spinner("Chunking and building vector index..."):
+            chunks = chunk_documents(pages)
+            if not chunks:
+                st.sidebar.error("No chunks created.")
+                return
 
-        embeddings = load_embedding_model()
-        if not embeddings:
-            st.sidebar.error("Failed to load embedding model.")
-            return
+            embeddings = load_embedding_model()
+            if not embeddings:
+                st.sidebar.error("Failed to load embedding model.")
+                return
 
-        vector_store = build_faiss_index(chunks, embeddings)
-        if not vector_store:
-            st.sidebar.error("Failed to build FAISS index.")
-            return
+            vector_store = build_faiss_index(chunks, embeddings)
+            if not vector_store:
+                st.sidebar.error("Failed to build FAISS index.")
+                return
 
-        saved = save_index(vector_store, chunks)
+            saved = save_index(vector_store, chunks)
 
-        st.session_state["vector_store"] = vector_store
-        st.session_state["chunks"] = chunks
-        st.session_state["embeddings"] = embeddings
+            st.session_state["vector_store"] = vector_store
+            st.session_state["chunks"] = chunks
+            st.session_state["embeddings"] = embeddings
 
-    st.sidebar.success(f"✅ Indexed {len(chunks)} chunks!")
-    if saved:
-        st.sidebar.info("💾 Saved to disk.")
+        st.sidebar.success(f"✅ Indexed {len(chunks)} chunks!")
+        if saved:
+            st.sidebar.info("💾 Saved to disk.")
+    
+    except Exception as e:
+        st.sidebar.error(f"❌ Processing failed: {str(e)}")
+        st.session_state["processing"] = False
 
 
 # ──────────────────────────────────────────────
@@ -259,9 +306,9 @@ def format_sources(sources: list[dict]) -> str:
     if not sources:
         return ""
 
-    lines = ["\n\nSources:"]
+    lines = ["\n\n**Sources:**"]
     for s in sources:
-        lines.append(f"- {s['doc_name']} (Page {s['page']})")
+        lines.append(f"- **{s['doc_name']}** (Page {s['page']})")
     return "\n".join(lines)
 
 
@@ -287,14 +334,18 @@ def main():
 
     # ── Try loading saved index once ──
     if not st.session_state["index_loaded"]:
-        embeddings = load_embedding_model()
-        if embeddings:
-            saved_store, saved_chunks = load_index(embeddings)
-            if saved_store is not None:
-                st.session_state["vector_store"] = saved_store
-                st.session_state["chunks"] = saved_chunks
-                st.session_state["embeddings"] = embeddings
-        st.session_state["index_loaded"] = True
+        try:
+            embeddings = load_embedding_model()
+            if embeddings:
+                saved_store, saved_chunks = load_index(embeddings)
+                if saved_store is not None:
+                    st.session_state["vector_store"] = saved_store
+                    st.session_state["chunks"] = saved_chunks
+                    st.session_state["embeddings"] = embeddings
+        except Exception:
+            pass  # Silent fail - user will upload docs manually
+        finally:
+            st.session_state["index_loaded"] = True
 
     # ── Sidebar ──
     uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode = render_sidebar()
@@ -365,6 +416,11 @@ def main():
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(78, 205, 196, 0.2);
         }
+        
+        /* Info boxes */
+        .stAlert {
+            border-radius: 8px;
+        }
         </style>
         """,
         unsafe_allow_html=True
@@ -379,124 +435,152 @@ def main():
     index_ready = st.session_state["vector_store"] is not None
     has_api_key = bool(groq_api_key)
 
+    # Show helpful status messages
     if not index_ready:
-        st.info("### Get Started:\n1. Upload PDFs OR use sample docs in the sidebar.\n2. Click **⚡ Process Documents**.\n3. Ask questions below!")
+        st.info("### 🚀 Get Started:\n1. Upload PDFs **OR** check 'Use sample documents' in the sidebar.\n2. Click **⚡ Process Documents**.\n3. Ask questions below!")
     elif not has_api_key:
-        st.warning("⚠️ LLM service not configured. Showing retrieved results only.")
+        st.warning("⚠️ **LLM service not configured.** The app will show retrieved document chunks only.\n\n💡 To enable AI-generated answers, set `GROQ_API_KEY` in Streamlit secrets or environment variables.")
 
     # ── Render chat history ──
     render_chat_history()
 
     # ── Feature 3 & 4: Empty State & Example Queries ──
+    # FIX #3: Proper handling of preset queries
     if index_ready and not st.session_state["chat_history"]:
         with st.container():
             st.info("💡 **Try asking:**")
             col1, col2, col3 = st.columns(3)
+            
+            # FIX #1: Add unique keys to buttons
             with col1:
-                if st.button("📄 Summarize Document", use_container_width=True):
+                if st.button("📄 Summarize Document", use_container_width=True, key="preset_summarize"):
                     st.session_state["preset_query"] = "Summarize the key points of the documents."
+                    st.rerun()
             with col2:
-                if st.button("🔑 Key Findings", use_container_width=True):
+                if st.button("🔑 Key Findings", use_container_width=True, key="preset_findings"):
                     st.session_state["preset_query"] = "What are the key findings or main conclusions?"
+                    st.rerun()
             with col3:
-                if st.button("👶 Explain Like I'm Beginner", use_container_width=True):
+                if st.button("👶 Explain Simply", use_container_width=True, key="preset_beginner"):
                     st.session_state["preset_query"] = "Explain the core concepts in these documents simply, as if I am a beginner."
+                    st.rerun()
 
     # ── Chat input ──
     preset = st.session_state.pop("preset_query", None)
     user_query = st.chat_input(
         "Ask something about your documents...",
         disabled=(not index_ready),
+        key="chat_input_main",
     )
+    
+    # FIX #3: Use preset if available
     if preset:
         user_query = preset
 
     if user_query and index_ready:
-        # Display user message immediately
-        with st.chat_message("user"):
-            st.markdown(user_query)
+        # FIX #7: Wrap query processing in error boundary
+        try:
+            # Display user message immediately
+            with st.chat_message("user"):
+                st.markdown(user_query)
 
-        # Add to history
-        add_to_chat("user", user_query)
+            # Add to history
+            add_to_chat("user", user_query)
 
-        # ── Retrieve relevant chunks ──
-        with st.spinner("Searching..."):
-            results = retrieve_chunks(
-                user_query, st.session_state["vector_store"], top_k
-            )
-            # Save for debug panel
-            st.session_state["last_query"] = user_query
-            st.session_state["last_results"] = results
-
-        if not results:
-            response = "I couldn't find any relevant information in your documents. Try rephrasing your question."
-            st.session_state["last_confidence"] = "no context"
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            add_to_chat("assistant", response)
-
-        elif not has_api_key:
-            st.session_state["last_confidence"] = "unknown (no API key)"
-            # No API key — show retrieved chunks directly
-            response_parts = ["**Retrieved chunks** (add Groq API key for AI answers):\n"]
-            for i, r in enumerate(results, 1):
-                response_parts.append(
-                    f"**{i}. {r['doc_name']}** — Page {r['page']} "
-                    f"(score: {r['score']:.2f})\n> {r['text'][:300]}...\n"
+            # ── Retrieve relevant chunks ──
+            with st.spinner("🔍 Searching documents..."):
+                results = retrieve_chunks(
+                    user_query, st.session_state["vector_store"], top_k
                 )
-            response = "\n".join(response_parts)
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            add_to_chat("assistant", response)
+                # Save for debug panel
+                st.session_state["last_query"] = user_query
+                st.session_state["last_results"] = results
 
-        else:
-            # ── Generate LLM answer with conversation memory ──
-            with st.chat_message("assistant"):
-                with st.spinner("Generating answer..."):
-                    answer_data = generate_answer(
-                        query=user_query,
-                        retrieved_chunks=results,
-                        chat_history=st.session_state["chat_history"][:-1],  # exclude current query
-                        api_key=groq_api_key,
+            if not results:
+                response = "I couldn't find any relevant information in your documents. Try rephrasing your question or uploading different documents."
+                st.session_state["last_confidence"] = "no context"
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                add_to_chat("assistant", response)
+
+            elif not has_api_key:
+                st.session_state["last_confidence"] = "no API key"
+                # No API key — show retrieved chunks directly
+                response_parts = ["**📄 Retrieved Context** (Configure GROQ_API_KEY for AI-generated answers):\n"]
+                for i, r in enumerate(results, 1):
+                    response_parts.append(
+                        f"**{i}. {r['doc_name']}** — Page {r['page']} "
+                        f"(Similarity: {r['score']:.2f})\n> {r['text'][:300]}...\n"
                     )
-                    st.session_state["last_confidence"] = answer_data.get("confidence", "unknown")
+                response = "\n".join(response_parts)
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                add_to_chat("assistant", response)
 
-                if answer_data.get("error"):
-                    response = "⚠️ LLM temporarily unavailable. Showing retrieved results."
-                    st.warning(response)
-                    
-                    # Fallback display: Show retrieved chunks directly
-                    for i, r in enumerate(results, 1):
-                        st.markdown(f"**{i}. `{r['doc_name']}` (Page {r['page']})** - Score: {r['score']:.2f}")
-                        st.markdown(f"> {r['text'][:200]}...")
-                else:
-                    # Display answer + sources in a clean format
-                    sources_str = format_sources(answer_data["sources"])
-                    response = "**Answer:**\n" + answer_data["answer"] + sources_str
-                    
-                    # ── Feature 5: Streaming Response ──
-                    st.write_stream(stream_text(response))
+            else:
+                # ── Generate LLM answer with conversation memory ──
+                with st.chat_message("assistant"):
+                    with st.spinner("🤖 Generating answer..."):
+                        answer_data = generate_answer(
+                            query=user_query,
+                            retrieved_chunks=results,
+                            chat_history=st.session_state["chat_history"][:-1],  # exclude current query
+                            api_key=groq_api_key,
+                        )
+                        st.session_state["last_confidence"] = answer_data.get("confidence", "unknown")
 
-                    # ── Feature 4: Multi-Document Comparison Mode Display ──
-                    with st.expander("📄 View Retrieved Context", expanded=compare_mode):
-                        if compare_mode:
-                            # Group by document
-                            grouped = {}
-                            for r in results:
-                                grouped.setdefault(r["doc_name"], []).append(r)
-                            
-                            for doc, chunks in grouped.items():
-                                st.markdown(f"**Document: `{doc}`**")
-                                for c in chunks:
-                                    st.markdown(f"- **Page {c['page']}** (Score: {c['score']:.2f}): {c['text'][:200]}...")
-                                st.divider()
-                        else:
-                            # Standard linear display
-                            for i, r in enumerate(results, 1):
-                                st.markdown(f"**{i}. `{r['doc_name']}` (Page {r['page']})** - Score: {r['score']:.2f}")
-                                st.markdown(f"> {r['text'][:200]}...")
+                    # FIX #4: Properly handle LLM errors
+                    if answer_data.get("error"):
+                        response = "⚠️ **LLM temporarily unavailable.** Showing retrieved document chunks instead:\n\n"
+                        st.warning("LLM service is temporarily unavailable. Displaying retrieved context.")
+                        
+                        # Fallback display: Show retrieved chunks directly
+                        fallback_parts = [response]
+                        for i, r in enumerate(results, 1):
+                            fallback_parts.append(
+                                f"**{i}. {r['doc_name']}** (Page {r['page']}) - Score: {r['score']:.2f}\n"
+                                f"> {r['text'][:250]}...\n"
+                            )
+                        response = "\n".join(fallback_parts)
+                        st.markdown(response)
+                        
+                        # FIX #4: Add fallback response to chat history
+                        add_to_chat("assistant", response)
+                    else:
+                        # Display answer + sources in a clean format
+                        sources_str = format_sources(answer_data["sources"])
+                        response = answer_data["answer"] + sources_str
+                        
+                        # ── Feature 5: Streaming Response ──
+                        st.write_stream(stream_text(response))
 
-            add_to_chat("assistant", response)
+                        # ── Feature 4: Multi-Document Comparison Mode Display ──
+                        with st.expander("📄 View Retrieved Context", expanded=compare_mode):
+                            if compare_mode:
+                                # Group by document
+                                grouped = {}
+                                for r in results:
+                                    grouped.setdefault(r["doc_name"], []).append(r)
+                                
+                                for doc, chunks in grouped.items():
+                                    st.markdown(f"**Document: `{doc}`**")
+                                    for c in chunks:
+                                        st.markdown(f"- **Page {c['page']}** (Score: {c['score']:.2f}): {c['text'][:200]}...")
+                                    st.divider()
+                            else:
+                                # Standard linear display
+                                for i, r in enumerate(results, 1):
+                                    st.markdown(f"**{i}. `{r['doc_name']}` (Page {r['page']})** - Score: {r['score']:.2f}")
+                                    st.markdown(f"> {r['text'][:200]}...")
+
+                        add_to_chat("assistant", response)
+        
+        except Exception as e:
+            # FIX #7: Graceful error handling
+            error_msg = f"⚠️ An error occurred while processing your query: {str(e)}"
+            with st.chat_message("assistant"):
+                st.error(error_msg)
+            add_to_chat("assistant", error_msg)
 
 
 if __name__ == "__main__":

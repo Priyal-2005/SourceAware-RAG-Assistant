@@ -38,7 +38,7 @@ def get_api_key():
 
 # ── Model configuration ──
 # Using llama3-8b-8192 as it is reliable and fast for RAG tasks.
-MODEL_NAME = "llama3-8b-8192"
+MODEL_NAME="llama-3.1-70b-versatile"
 DEFAULT_MODEL = MODEL_NAME
 
 # ── Debug configuration ──
