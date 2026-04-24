@@ -2,13 +2,6 @@
 
 A Retrieval-Augmented Generation (RAG) system that extracts information from PDF documents, performs semantic search, and generates context-aware answers using a Large Language Model (LLM). Crucially, the system provides exact source attribution (document name and page number) for every answer generated to prevent hallucinations and allow users to verify the information.
 
-## Demo
-
-![Application Architecture Placeholder](docs/architecture.png)
-*Figure 1: High-level overview of the document ingestion and query retrieval pipeline.*
-
-![User Interface Placeholder](docs/ui_demo.png)
-*Figure 2: The Streamlit chat interface showing an answer with source attribution.*
 
 ## Features
 
