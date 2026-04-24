@@ -300,25 +300,70 @@ def main():
     uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode = render_sidebar()
     groq_api_key = get_api_key()
 
-    # ── Custom CSS for UI Improvements ──
+    # ── Premium Custom CSS for UI Improvements ──
     st.markdown(
         """
         <style>
-        .stChatMessage[data-testid="stChatMessage"][aria-label="assistant"] {
-            background-color: #1E1E2E;
-            border-left: 4px solid #BB86FC;
-            border-radius: 8px;
-            padding: 1rem;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
         }
+        
         .main-header {
-            font-size: 2.5rem;
-            font-weight: bold;
-            margin-bottom: -1rem;
+            font-size: 3.2rem;
+            font-weight: 800;
+            background: -webkit-linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: -0.5rem;
+            line-height: 1.2;
         }
+        
         .sub-header {
             font-size: 1.2rem;
+            font-weight: 400;
             color: #A0A0A0;
+            margin-bottom: 2rem;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Assistant Chat Bubble */
+        .stChatMessage[data-testid="stChatMessage"][aria-label="assistant"] {
+            background: linear-gradient(145deg, #1e1e2e, #2a2a3e);
+            border-left: 4px solid #4ECDC4;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
             margin-bottom: 1rem;
+        }
+        
+        /* User Chat Bubble */
+        .stChatMessage[data-testid="stChatMessage"][aria-label="user"] {
+            background: linear-gradient(145deg, #252525, #2f2f2f);
+            border-right: 4px solid #FF6B6B;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1rem;
+        }
+        
+        /* Sidebar Polish */
+        [data-testid="stSidebar"] {
+            background-color: #11111b !important;
+            border-right: 1px solid #1e1e2e;
+        }
+        
+        /* Button Hover Effects */
+        .stButton>button {
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+        
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(78, 205, 196, 0.2);
         }
         </style>
         """,
