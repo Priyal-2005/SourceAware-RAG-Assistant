@@ -24,8 +24,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 # ── Default parameters ──
-DEFAULT_CHUNK_SIZE = 600
-DEFAULT_CHUNK_OVERLAP = 80
+DEFAULT_CHUNK_SIZE = 400
+DEFAULT_CHUNK_OVERLAP = 50
 
 
 def chunk_documents(

@@ -335,7 +335,7 @@ def process_documents(uploaded_files):
             st.session_state["extracted_pages"] = pages
 
         with st.spinner("Chunking and building vector index..."):
-            chunks = chunk_documents(pages)
+            chunks = chunk_documents(pages, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
             if not chunks:
                 st.sidebar.error("No chunks created.")
                 return

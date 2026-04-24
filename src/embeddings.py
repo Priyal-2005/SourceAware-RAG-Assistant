@@ -26,17 +26,18 @@ embeddings.py — HuggingFace embedding model loading
 """
 
 import os
+import warnings
 import streamlit as st
 
-# Try modern import first (LangChain new version)
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings
-except ImportError:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+# ── Performance & Stability Configuration ──
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision")
+warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
+warnings.filterwarnings("ignore", message=".*torchvision.*")
 
 # MODIFY THIS: Better, faster embedding model
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en"
-
 
 # ADD THIS: Cache embedding model in Streamlit to avoid reloading
 @st.cache_resource(show_spinner=False)
@@ -44,7 +45,14 @@ def load_embedding_model(model_name: str = EMBEDDING_MODEL_NAME, hf_token: str |
     """
     Load embedding model with optional HF token support.
     Works for both local (.env) and Streamlit Cloud (secrets).
+    Lazy-loads the heavy LangChain/HF dependencies for faster app boot.
     """
+    
+    # Lazy import to prevent slow startups
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError:
+        from langchain_community.embeddings import HuggingFaceEmbeddings
 
     try:
         # Set token ONLY if provided

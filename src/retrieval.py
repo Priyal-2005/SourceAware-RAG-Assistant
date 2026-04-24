@@ -23,8 +23,8 @@ def retrieve_chunks(query: str, vector_store, top_k: int = 5, compare_mode: bool
     If compare_mode=True: Returns dict mapping doc_name to list of chunk dicts.
     """
     try:
-        # MODIFY THIS: Fetch plenty if compare mode to ensure we get chunks from multiple docs
-        k = 100 if compare_mode else top_k
+        # Optimized: Dynamic k to avoid fetching 100 heavy chunks unnecessarily.
+        k = max(top_k * 4, 15) if compare_mode else top_k
         raw_results = vector_store.similarity_search_with_score(query, k=k)
     except Exception:
         return {} if compare_mode else []
@@ -45,11 +45,11 @@ def retrieve_chunks(query: str, vector_store, top_k: int = 5, compare_mode: bool
                 
             similarity = 1.0 / (1.0 + distance)
             chunk_text = doc.page_content
-            chunk_words = set(chunk_text.lower().split())
-            overlap = query_words.intersection(chunk_words)
+            chunk_text_lower = chunk_text.lower()
+            overlap = [w for w in query_words if f" {w} " in f" {chunk_text_lower} "]
             reason = f"Semantic match (score: {similarity:.2f})"
             if overlap:
-                reason += f" + Keyword match: {', '.join(list(overlap)[:3])}"
+                reason += f" + Keyword match: {', '.join(overlap[:3])}"
                 
             chunk_data = {
                 "text": chunk_text,
@@ -71,15 +71,15 @@ def retrieve_chunks(query: str, vector_store, top_k: int = 5, compare_mode: bool
             similarity = 1.0 / (1.0 + distance)
             
             # ── Feature 1: Explainable Retrieval ──
-            # Find which query keywords appear in this chunk
+            # Find which query keywords appear in this chunk (optimized string match)
             chunk_text = doc.page_content
-            chunk_words = set(chunk_text.lower().split())
-            overlap = query_words.intersection(chunk_words)
+            chunk_text_lower = chunk_text.lower()
+            overlap = [w for w in query_words if f" {w} " in f" {chunk_text_lower} "]
             
             # Build explanation string
             reason = f"Semantic match (score: {similarity:.2f})"
             if overlap:
-                reason += f" + Keyword match: {', '.join(list(overlap)[:3])}"
+                reason += f" + Keyword match: {', '.join(overlap[:3])}"
                 
             results.append({
                 "text": chunk_text,
