@@ -5,11 +5,13 @@ A Retrieval-Augmented Generation (RAG) system that extracts information from PDF
 
 ## Features
 
-- **Multi-Document Ingestion:** Upload and process multiple PDF files simultaneously.
+- **Premium UI / UX:** Dark modern theme with glassmorphism, gradient typography, and custom chat bubbles.
+- **Multi-Session Chat History:** Persistent ChatGPT-style sidebar to manage, switch between, and store multiple chat threads.
+- **High-Performance Architecture:** Employs optimized vector search parameters (`k`), fast string matching for text overlaps, and lazy loading to guarantee sub-second latency.
+- **Multi-Document Ingestion & Auto-Indexing:** Seamlessly process uploaded PDFs, or auto-index sample documents instantly.
 - **Source Attribution:** Maintains document metadata (filename and page number) throughout the entire pipeline, ensuring all LLM responses include exact citations.
-- **Semantic Search:** Uses HuggingFace MiniLM embeddings and FAISS for fast and accurate similarity search.
+- **Semantic Search:** Uses HuggingFace embeddings (`BAAI/bge-small-en`) and FAISS for fast and accurate similarity search.
 - **Strict Context Boundaries:** The LLM is explicitly prompted to answer queries using *only* the retrieved context and to gracefully decline if the information is missing.
-- **Conversation Memory:** Maintains the last five conversational turns, allowing for follow-up questions and contextual dialogue.
 - **Local Indexing:** Saves the vectorized FAISS index to disk to prevent re-processing identical documents across application restarts.
 
 ## Architecture
@@ -34,7 +36,7 @@ The system operates in two main phases:
 - **Frontend:** Streamlit
 - **PDF Parsing:** pypdf
 - **Chunking & Vector Store:** LangChain, FAISS (CPU)
-- **Embeddings:** Sentence-Transformers (`all-MiniLM-L6-v2`) via HuggingFace
+- **Embeddings:** HuggingFaceEmbeddings (`BAAI/bge-small-en`) via LangChain
 - **LLM Inference:** Groq API (`llama-3.1-70b-versatile`)
 - **Environment Management:** python-dotenv
 
