@@ -90,26 +90,48 @@ Question:
 
 Answer:"""
 
+# ADD THIS: Template for true multi-document comparison
+PROMPT_COMPARE = """You are a research assistant.
 
-def _build_context(retrieved_chunks: list[dict]) -> str:
+Context grouped by document:
+{context}
+
+Task:
+* Summarize key points from EACH document separately
+* Then compare them
+* Highlight similarities and differences
+
+Output format:
+Document-wise Summary:
+* [doc1]: ...
+* [doc2]: ...
+
+Comparison:
+* Similarities: ...
+* Differences: ...
+
+Question:
+{query}
+
+Answer:"""
+
+
+def _build_context(retrieved_chunks, compare_mode: bool = False) -> str:
     """
     Combine retrieved chunks into a single context string with source labels.
-
-    Step 1: For each chunk, prepend a source header [Document: X | Page: Y].
-    Step 2: Join all chunks with blank lines for readability.
-
-    Why we include source labels in the context:
-      The LLM can see which chunk came from which document/page.  This lets
-      it cite sources in its answer (e.g., "According to report.pdf, page 3...").
-
-    Args:
-        retrieved_chunks: List of {"text", "doc_name", "page", "score"} dicts.
-
-    Returns:
-        A formatted context string ready for the prompt.
     """
+    # ADD THIS: Handle compare mode grouping
+    if compare_mode:
+        context_parts = []
+        for doc_name, chunks in retrieved_chunks.items():
+            context_parts.append(f"Document: {doc_name}")
+            for chunk in chunks:
+                context_parts.append(f"[Page: {chunk['page']}]\n{chunk['text']}")
+            context_parts.append("") # blank line between docs
+        return "\n".join(context_parts)
+    
+    # Existing linear context building
     context_parts = []
-
     for chunk in retrieved_chunks:
         header = f"[Document: {chunk['doc_name']} | Page: {chunk['page']}]"
         context_parts.append(f"{header}\n{chunk['text']}")
@@ -168,10 +190,11 @@ def _format_chat_history(chat_history: list[dict], max_turns: int = 3) -> str:
 
 def generate_answer(
     query: str,
-    retrieved_chunks: list[dict],
+    retrieved_chunks, # list or dict depending on compare_mode
     chat_history: list[dict] | None = None,
     api_key: str | None = None,
     model: str = DEFAULT_MODEL,
+    compare_mode: bool = False,
 ) -> dict:
     """
     Generate an LLM answer from retrieved chunks using Groq.
@@ -209,10 +232,16 @@ def generate_answer(
             "confidence": "no context"
         }
 
+    # ── MODIFY THIS: Flatten chunks for confidence and source tracking ──
+    all_chunks = []
+    if compare_mode:
+        for chunks in retrieved_chunks.values():
+            all_chunks.extend(chunks)
+    else:
+        all_chunks = retrieved_chunks
+
     # ── Feature 2: Confidence Detection ──
-    # Why thresholding matters: if the best retrieved chunk has a low score,
-    # the LLM is likely to answer "I don't know" or hallucinate.
-    top_score = max(chunk.get("score", 0) for chunk in retrieved_chunks)
+    top_score = max((chunk.get("score", 0) for chunk in all_chunks), default=0)
     if top_score < 0.4:
         confidence = "low"
     elif top_score < 0.7:
@@ -221,11 +250,17 @@ def generate_answer(
         confidence = "high"
 
     # ── Step 1: Build context ──
-    context = _build_context(retrieved_chunks)
+    context = _build_context(retrieved_chunks, compare_mode)
 
-    # ── Step 2 & 3: Build prompt with or without history ──
+    # ── Step 2 & 3: Build prompt ──
     history_str = _format_chat_history(chat_history or [])
-    if history_str:
+    
+    # ADD THIS: Select compare prompt or normal prompt
+    if compare_mode:
+        prompt = PROMPT_COMPARE.format(context=context, query=query)
+        if history_str:
+            prompt = f"Previous conversation:\n{history_str}\n\n" + prompt
+    elif history_str:
         prompt = PROMPT_WITH_HISTORY.format(
             chat_history=history_str, context=context, query=query
         )
@@ -283,7 +318,7 @@ def generate_answer(
     # ── Step 5: Collect unique sources ──
     seen = set()
     sources = []
-    for chunk in retrieved_chunks:
+    for chunk in all_chunks:
         key = (chunk["doc_name"], chunk["page"])
         if key not in seen:
             seen.add(key)

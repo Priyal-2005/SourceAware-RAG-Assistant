@@ -15,43 +15,78 @@ Score conversion:
 
 
 
-def retrieve_chunks(query: str, vector_store, top_k: int = 5) -> list[dict]:
+def retrieve_chunks(query: str, vector_store, top_k: int = 5, compare_mode: bool = False):
     """
     Search FAISS for the most relevant chunks to the user's query.
 
-    Returns list of {"text", "doc_name", "page", "score"} dicts.
-    Returns empty list on failure.
+    If compare_mode=False: Returns list of {"text", "doc_name", "page", "score"} dicts.
+    If compare_mode=True: Returns dict mapping doc_name to list of chunk dicts.
     """
     try:
-        raw_results = vector_store.similarity_search_with_score(query, k=top_k)
+        # MODIFY THIS: Fetch plenty if compare mode to ensure we get chunks from multiple docs
+        k = 100 if compare_mode else top_k
+        raw_results = vector_store.similarity_search_with_score(query, k=k)
     except Exception:
-        return []
+        return {} if compare_mode else []
 
     # Simple keyword extraction for explanation
     # Ignore short words for cleaner overlap matching
     query_words = {w.lower() for w in query.split() if len(w) > 3}
 
-    results = []
-    for doc, distance in raw_results:
-        similarity = 1.0 / (1.0 + distance)
-        
-        # ── Feature 1: Explainable Retrieval ──
-        # Find which query keywords appear in this chunk
-        chunk_text = doc.page_content
-        chunk_words = set(chunk_text.lower().split())
-        overlap = query_words.intersection(chunk_words)
-        
-        # Build explanation string
-        reason = f"Semantic match (score: {similarity:.2f})"
-        if overlap:
-            reason += f" + Keyword match: {', '.join(list(overlap)[:3])}"
+    # ADD THIS: Grouping logic for true multi-document comparison
+    if compare_mode:
+        grouped_results = {}
+        for doc, distance in raw_results:
+            doc_name = doc.metadata.get("doc_name", "Unknown")
             
-        results.append({
-            "text": chunk_text,
-            "doc_name": doc.metadata.get("doc_name", "Unknown"),
-            "page": doc.metadata.get("page", 0),
-            "score": round(similarity, 4),
-            "reason": reason
-        })
+            # Keep only top_k chunks per document
+            if len(grouped_results.get(doc_name, [])) >= top_k:
+                continue
+                
+            similarity = 1.0 / (1.0 + distance)
+            chunk_text = doc.page_content
+            chunk_words = set(chunk_text.lower().split())
+            overlap = query_words.intersection(chunk_words)
+            reason = f"Semantic match (score: {similarity:.2f})"
+            if overlap:
+                reason += f" + Keyword match: {', '.join(list(overlap)[:3])}"
+                
+            chunk_data = {
+                "text": chunk_text,
+                "doc_name": doc_name,
+                "page": doc.metadata.get("page", 0),
+                "score": round(similarity, 4),
+                "reason": reason
+            }
+            
+            if doc_name not in grouped_results:
+                grouped_results[doc_name] = []
+            grouped_results[doc_name].append(chunk_data)
+            
+        return grouped_results
 
-    return results
+    else:
+        results = []
+        for doc, distance in raw_results:
+            similarity = 1.0 / (1.0 + distance)
+            
+            # ── Feature 1: Explainable Retrieval ──
+            # Find which query keywords appear in this chunk
+            chunk_text = doc.page_content
+            chunk_words = set(chunk_text.lower().split())
+            overlap = query_words.intersection(chunk_words)
+            
+            # Build explanation string
+            reason = f"Semantic match (score: {similarity:.2f})"
+            if overlap:
+                reason += f" + Keyword match: {', '.join(list(overlap)[:3])}"
+                
+            results.append({
+                "text": chunk_text,
+                "doc_name": doc.metadata.get("doc_name", "Unknown"),
+                "page": doc.metadata.get("page", 0),
+                "score": round(similarity, 4),
+                "reason": reason
+            })
+
+        return results

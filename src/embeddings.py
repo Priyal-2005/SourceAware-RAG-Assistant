@@ -26,6 +26,7 @@ embeddings.py — HuggingFace embedding model loading
 """
 
 import os
+import streamlit as st
 
 # Try modern import first (LangChain new version)
 try:
@@ -33,10 +34,12 @@ try:
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
+# MODIFY THIS: Better, faster embedding model
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en"
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
-
+# ADD THIS: Cache embedding model in Streamlit to avoid reloading
+@st.cache_resource(show_spinner=False)
 def load_embedding_model(model_name: str = EMBEDDING_MODEL_NAME, hf_token: str | None = None):
     """
     Load embedding model with optional HF token support.
@@ -48,7 +51,11 @@ def load_embedding_model(model_name: str = EMBEDDING_MODEL_NAME, hf_token: str |
         if hf_token:
             os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_token
 
-        embeddings = HuggingFaceEmbeddings(model_name=model_name)
+        # MODIFY THIS: Add batch processing for speed
+        embeddings = HuggingFaceEmbeddings(
+            model_name=model_name,
+            encode_kwargs={'batch_size': 32}
+        )
         return embeddings
 
     except Exception as e:

@@ -10,7 +10,10 @@ All core logic lives in the src/ package.
 import os
 import io
 import glob
+import json
+from pathlib import Path
 import time
+import hashlib
 import streamlit as st
 
 # ── Import core logic from src modules ──
@@ -29,60 +32,86 @@ MAX_CHAT_HISTORY = 10  # Store last 5 exchanges (5 user + 5 assistant = 10 messa
 # Session state initialization
 # ──────────────────────────────────────────────
 
-def init_session_state():
-    """
-    Initialize all session_state keys on first run.
+# ──────────────────────────────────────────────
+# Chat history management (Persistent Multi-Session)
+# ──────────────────────────────────────────────
 
-    Why we do this upfront:
-      Streamlit re-executes the entire script on every interaction.
-      By initializing defaults here, we avoid KeyError crashes and
-      keep the rest of the code clean with direct access.
-    """
+CHATS_DIR = Path("./chats")
+
+def load_chats():
+    CHATS_DIR.mkdir(parents=True, exist_ok=True)
+    chats = {}
+    for chat_file in CHATS_DIR.glob("*.json"):
+        try:
+            with open(chat_file, "r", encoding="utf-8") as f:
+                chat_data = json.load(f)
+                chats[chat_file.stem] = chat_data
+        except Exception:
+            pass
+            
+    if not chats:
+        default_id = f"chat_{int(time.time())}"
+        chats[default_id] = {"title": "New Chat", "created_at": time.time(), "messages": []}
+        
+    return dict(sorted(chats.items(), key=lambda x: x[1].get("created_at", 0), reverse=True))
+
+def save_chat(chat_id, chat_data):
+    CHATS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CHATS_DIR / f"{chat_id}.json", "w", encoding="utf-8") as f:
+        json.dump(chat_data, f, indent=2)
+
+def init_session_state():
+    """Initialize all session_state keys on first run."""
     defaults = {
-        "chat_history": [],      # List of {"role", "content"} dicts
-        "extracted_pages": [],   # Phase 1 page records
-        "chunks": [],            # Phase 2 chunk records
-        "vector_store": None,    # FAISS index
-        "embeddings": None,      # Loaded embedding model
-        "index_loaded": False,   # Whether we've tried loading from disk
-        "processing": False,     # Processing lock to prevent duplicate runs
+        "extracted_pages": [],
+        "chunks": [],
+        "vector_store": None,
+        "embeddings": None,
+        "index_loaded": False,
+        "processing": False,
+        "docs_hash": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
+    if "chats" not in st.session_state:
+        st.session_state.chats = load_chats()
+        
+    if "current_chat_id" not in st.session_state:
+        st.session_state.current_chat_id = next(iter(st.session_state.chats.keys()))
 
-# ──────────────────────────────────────────────
-# Chat history management
-# ──────────────────────────────────────────────
+def get_current_chat_history():
+    """Retrieve the messages list for the active chat session."""
+    return st.session_state.chats[st.session_state.current_chat_id]["messages"]
 
 def add_to_chat(role: str, content: str):
-    """
-    Append a message to chat history, enforcing the max size.
-
-    Why we limit history:
-      Each message takes up tokens in the LLM prompt.  Keeping only
-      the last 5 exchanges (10 messages) ensures we don't eat into
-      the space needed for document context, while still supporting
-      follow-up questions like "tell me more" or "what about page 5?".
-    """
-    st.session_state["chat_history"].append({"role": role, "content": content})
-
-    # Trim to max size (keep most recent messages)
-    if len(st.session_state["chat_history"]) > MAX_CHAT_HISTORY:
-        st.session_state["chat_history"] = st.session_state["chat_history"][-MAX_CHAT_HISTORY:]
-
+    """Append a message to the active chat history."""
+    chat_id = st.session_state.current_chat_id
+    chat = st.session_state.chats[chat_id]
+    
+    chat["messages"].append({"role": role, "content": content})
+    
+    # Auto-generate title on first user message
+    if len(chat["messages"]) == 1 and role == "user":
+        chat["title"] = content[:30] + "..." if len(content) > 30 else content
+        
+    if len(chat["messages"]) > MAX_CHAT_HISTORY:
+        chat["messages"] = chat["messages"][-MAX_CHAT_HISTORY:]
+        
+    save_chat(chat_id, chat)
 
 def clear_chat():
-    """Reset chat history for a fresh conversation."""
-    st.session_state["chat_history"] = []
+    """Reset active chat history."""
+    chat_id = st.session_state.current_chat_id
+    st.session_state.chats[chat_id]["messages"] = []
+    st.session_state.chats[chat_id]["title"] = "New Chat"
+    save_chat(chat_id, st.session_state.chats[chat_id])
+    
     # Clear debug panel data
-    if "last_query" in st.session_state:
-        del st.session_state["last_query"]
-    if "last_results" in st.session_state:
-        del st.session_state["last_results"]
-    if "last_confidence" in st.session_state:
-        del st.session_state["last_confidence"]
+    st.session_state.pop("last_query", None)
+    st.session_state.pop("last_results", None)
+    st.session_state.pop("last_confidence", None)
 
 
 # ──────────────────────────────────────────────
@@ -112,8 +141,50 @@ def render_sidebar():
     Returns (uploaded_files, chunk_size, chunk_overlap, top_k, compare_mode).
     """
     with st.sidebar:
+        # ── Feature 5: Chat Sessions UI ──
+        st.header("💬 Chat History")
+        if st.button("➕ New Chat", use_container_width=True, key="new_chat_btn"):
+            new_id = f"chat_{int(time.time())}"
+            # Prepend new chat
+            st.session_state.chats = {new_id: {"title": "New Chat", "created_at": time.time(), "messages": []}, **st.session_state.chats}
+            st.session_state.current_chat_id = new_id
+            save_chat(new_id, st.session_state.chats[new_id])
+            st.rerun()
+            
+        st.markdown("<div style='max-height: 250px; overflow-y: auto; padding-right: 5px;'>", unsafe_allow_html=True)
+        for chat_id, chat_data in st.session_state.chats.items():
+            btn_type = "primary" if chat_id == st.session_state.current_chat_id else "secondary"
+            title = chat_data.get('title', 'New Chat')
+            if len(title) > 25:
+                title = title[:22] + "..."
+            if st.button(f"🗨️ {title}", key=f"btn_{chat_id}", use_container_width=True, type=btn_type):
+                st.session_state.current_chat_id = chat_id
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.divider()
+
+        # ── Settings ──
+        st.header("⚙️ Settings")
+        chunk_size = st.slider(
+            "Chunk size", 200, 1500, 400, 50,
+            help="Characters per chunk.",
+            key="chunk_size_slider",
+        )
+        chunk_overlap = st.slider(
+            "Chunk overlap", 0, 300, 50, 10,
+            help="Overlap between chunks.",
+            key="chunk_overlap_slider",
+        )
+        top_k = st.slider(
+            "Top-K results", 1, 10, 5,
+            help="Number of chunks to retrieve per query.",
+            key="top_k_slider",
+        )
+        st.divider()
+
         # ── Section 1: Documents ──
-        st.header("1. 📁 Documents")
+        st.header("📁 Documents")
         
         use_sample = st.checkbox("Use sample documents", key="use_sample_docs_checkbox")
         
@@ -137,6 +208,14 @@ def render_sidebar():
                             uploaded_files.append(b)
                     except Exception as e:
                         st.error(f"Failed to load {os.path.basename(p)}: {e}")
+                        
+                # ── Auto-index sample documents ──
+                if uploaded_files:
+                    current_hash = get_docs_hash(uploaded_files, chunk_size, chunk_overlap)
+                    if st.session_state.get("docs_hash") != current_hash:
+                        st.session_state["processing"] = True
+                        process_documents(uploaded_files)
+                        st.session_state["processing"] = False
         else:
             uploaded_files = st.file_uploader(
                 "Upload PDF files",
@@ -148,7 +227,7 @@ def render_sidebar():
         st.divider()
 
         # ── Section 2: Index ──
-        st.header("2. ⚡ Index")
+        st.header("⚡ Index")
         
         if st.button(
             "⚡ Process Documents", 
@@ -165,7 +244,7 @@ def render_sidebar():
                 st.session_state["processing"] = False
 
         # Show index stats
-        if st.session_state["chunks"]:
+        if st.session_state.get("chunks"):
             stored = st.session_state["chunks"]
             doc_count = len({c["doc_name"] for c in stored})
             st.caption(f"✅ {len(stored)} chunks · {doc_count} doc(s)")
@@ -175,29 +254,8 @@ def render_sidebar():
 
         st.divider()
 
-        # ── Section 3: Settings ──
-        st.header("3. ⚙️ Settings")
-        
-        chunk_size = st.slider(
-            "Chunk size", 200, 1500, DEFAULT_CHUNK_SIZE, 50,
-            help="Characters per chunk. Click 'Process Documents' after changing.",
-            key="chunk_size_slider",
-        )
-        chunk_overlap = st.slider(
-            "Chunk overlap", 0, 300, DEFAULT_CHUNK_OVERLAP, 10,
-            help="Overlap between chunks. Click 'Process Documents' after changing.",
-            key="chunk_overlap_slider",
-        )
-        top_k = st.slider(
-            "Top-K results", 1, 10, 5,
-            help="Number of chunks to retrieve per query.",
-            key="top_k_slider",
-        )
-
-        st.divider()
-
         # ── Section 4: View Mode & Chat ──
-        st.header("4. 🗂️ View Mode")
+        st.header("🗂️ View Mode")
 
         compare_mode = st.checkbox(
             "Compare Across Documents", 
@@ -207,6 +265,7 @@ def render_sidebar():
         
         if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat_button"):
             clear_chat()
+            st.rerun()
 
         st.divider()
 
@@ -235,10 +294,33 @@ def render_sidebar():
 # Document processing pipeline
 # ──────────────────────────────────────────────
 
+# ADD THIS: Hash function to detect document changes
+def get_docs_hash(uploaded_files, chunk_size, chunk_overlap):
+    """Generate a hash based on file names, sizes, and chunk settings."""
+    h = hashlib.md5()
+    h.update(str(chunk_size).encode('utf-8'))
+    h.update(str(chunk_overlap).encode('utf-8'))
+    for f in uploaded_files:
+        h.update(f.name.encode('utf-8'))
+        h.update(str(getattr(f, 'size', len(f.getvalue() if hasattr(f, 'getvalue') else '0'))).encode('utf-8'))
+    return h.hexdigest()
+
 def process_documents(uploaded_files):
     """Run the full Phase 1→2 pipeline: extract → chunk → embed → index."""
     try:
-        with st.spinner("Extracting text from PDFs..."):
+        # ADD THIS: Check if we really need to reprocess
+        # The chunk settings were not passed to this function directly before, 
+        # but they are available in session_state via the keys.
+        chunk_size = st.session_state.get("chunk_size_slider", 400)
+        chunk_overlap = st.session_state.get("chunk_overlap_slider", 50)
+        
+        current_hash = get_docs_hash(uploaded_files, chunk_size, chunk_overlap)
+        
+        if st.session_state.get("docs_hash") == current_hash and st.session_state["vector_store"] is not None:
+            st.sidebar.info("⚡ Already indexed. Clear chat or change settings to reprocess.")
+            return
+
+        with st.spinner("📄 Extracting text from PDFs..."):
             pages, warnings = extract_text_from_pdfs(uploaded_files)
             for w in warnings:
                 if w.startswith("❌"):
@@ -274,6 +356,7 @@ def process_documents(uploaded_files):
             st.session_state["vector_store"] = vector_store
             st.session_state["chunks"] = chunks
             st.session_state["embeddings"] = embeddings
+            st.session_state["docs_hash"] = current_hash  # ADD THIS: Save hash
 
         st.sidebar.success(f"✅ Indexed {len(chunks)} chunks!")
         if saved:
@@ -297,7 +380,7 @@ def render_chat_history():
       messages are stored in session_state and re-rendered each time
       to maintain the conversation view.
     """
-    for msg in st.session_state["chat_history"]:
+    for msg in get_current_chat_history():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
@@ -357,71 +440,110 @@ def main():
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        /* 1. REMOVE STREAMLIT DEFAULT UI */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&display=swap');
         
         html, body, [class*="css"] {
             font-family: 'Inter', sans-serif;
+            background-color: #0d0d12;
+            color: #ececf1;
         }
         
         .main-header {
-            font-size: 3.2rem;
+            font-size: 3.5rem;
             font-weight: 800;
-            background: -webkit-linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            background: linear-gradient(135deg, #FF6B6B 0%, #4ECDC4 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: -0.5rem;
+            margin-bottom: 0.5rem;
             line-height: 1.2;
+            text-align: center;
         }
         
         .sub-header {
             font-size: 1.2rem;
             font-weight: 400;
             color: #A0A0A0;
-            margin-bottom: 2rem;
+            margin-bottom: 2.5rem;
             letter-spacing: 0.5px;
+            text-align: center;
         }
         
         /* Assistant Chat Bubble */
         .stChatMessage[data-testid="stChatMessage"][aria-label="assistant"] {
-            background: linear-gradient(145deg, #1e1e2e, #2a2a3e);
-            border-left: 4px solid #4ECDC4;
-            border-radius: 12px;
+            background: rgba(30, 30, 46, 0.6);
+            border: 1px solid rgba(78, 205, 196, 0.2);
+            border-radius: 16px;
             padding: 1.5rem;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            margin-bottom: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            margin-bottom: 1.5rem;
+            backdrop-filter: blur(10px);
         }
         
         /* User Chat Bubble */
         .stChatMessage[data-testid="stChatMessage"][aria-label="user"] {
-            background: linear-gradient(145deg, #252525, #2f2f2f);
-            border-right: 4px solid #FF6B6B;
-            border-radius: 12px;
+            background: rgba(45, 45, 60, 0.8);
+            border: 1px solid rgba(255, 107, 107, 0.2);
+            border-radius: 16px;
             padding: 1.5rem;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            margin-bottom: 1rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
         }
         
-        /* Sidebar Polish */
+        /* Sidebar Polish (Glassmorphism) */
         [data-testid="stSidebar"] {
-            background-color: #11111b !important;
-            border-right: 1px solid #1e1e2e;
+            background: linear-gradient(180deg, #11111b 0%, #0d0d12 100%) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Cards / Expanders */
+        .streamlit-expanderHeader {
+            background-color: rgba(30, 30, 46, 0.5) !important;
+            border-radius: 8px;
         }
         
         /* Button Hover Effects */
         .stButton>button {
-            border-radius: 8px;
+            border-radius: 10px;
             transition: all 0.3s ease;
             font-weight: 600;
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
         }
         
         .stButton>button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(78, 205, 196, 0.2);
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2);
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        
+        .stButton>button:active {
+            transform: translateY(0px);
+        }
+
+        /* Primary Button */
+        .stButton>button[kind="primary"] {
+            background: linear-gradient(135deg, #4ECDC4 0%, #2b8a82 100%);
+            border: none;
+            color: white;
+        }
+        
+        .stButton>button[kind="primary"]:hover {
+            box-shadow: 0 6px 20px rgba(78, 205, 196, 0.4);
+            background: linear-gradient(135deg, #5de0d7 0%, #34a89f 100%);
         }
         
         /* Info boxes */
         .stAlert {
-            border-radius: 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
         </style>
         """,
@@ -448,7 +570,7 @@ def main():
 
     # ── Feature 3 & 4: Empty State & Example Queries ──
     # FIX #3: Proper handling of preset queries
-    if index_ready and not st.session_state["chat_history"]:
+    if index_ready and not get_current_chat_history():
         with st.container():
             st.info("💡 **Try asking:**")
             col1, col2, col3 = st.columns(3)
@@ -492,11 +614,11 @@ def main():
             # ── Retrieve relevant chunks ──
             with st.spinner("🔍 Searching documents..."):
                 results = retrieve_chunks(
-                    user_query, st.session_state["vector_store"], top_k
+                    user_query, st.session_state["vector_store"], top_k, compare_mode=compare_mode
                 )
-                # Save for debug panel
+                # Save for debug panel (flatten for debug view if compare mode)
                 st.session_state["last_query"] = user_query
-                st.session_state["last_results"] = results
+                st.session_state["last_results"] = [c for chunks in results.values() for c in chunks] if compare_mode else results
 
             if not results:
                 response = "I couldn't find any relevant information in your documents. Try rephrasing your question or uploading different documents."
@@ -509,11 +631,22 @@ def main():
                 st.session_state["last_confidence"] = "no API key"
                 # No API key — show retrieved chunks directly
                 response_parts = ["**📄 Retrieved Context** (Configure GROQ_API_KEY for AI-generated answers):\n"]
-                for i, r in enumerate(results, 1):
-                    response_parts.append(
-                        f"**{i}. {r['doc_name']}** — Page {r['page']} "
-                        f"(Similarity: {r['score']:.2f})\n> {r['text'][:300]}...\n"
-                    )
+                
+                # ADD THIS: Handle dictionary results in compare mode
+                if compare_mode:
+                    for doc, chunks in results.items():
+                        response_parts.append(f"\n**Document: `{doc}`**")
+                        for i, r in enumerate(chunks, 1):
+                            response_parts.append(
+                                f"**{i}.** Page {r['page']} "
+                                f"(Similarity: {r['score']:.2f})\n> {r['text'][:300]}...\n"
+                            )
+                else:
+                    for i, r in enumerate(results, 1):
+                        response_parts.append(
+                            f"**{i}. {r['doc_name']}** — Page {r['page']} "
+                            f"(Similarity: {r['score']:.2f})\n> {r['text'][:300]}...\n"
+                        )
                 response = "\n".join(response_parts)
                 with st.chat_message("assistant"):
                     st.markdown(response)
@@ -526,8 +659,9 @@ def main():
                         answer_data = generate_answer(
                             query=user_query,
                             retrieved_chunks=results,
-                            chat_history=st.session_state["chat_history"][:-1],  # exclude current query
+                            chat_history=get_current_chat_history()[:-1],  # exclude current query
                             api_key=groq_api_key,
+                            compare_mode=compare_mode, 
                         )
                         st.session_state["last_confidence"] = answer_data.get("confidence", "unknown")
 
@@ -538,11 +672,20 @@ def main():
                         
                         # Fallback display: Show retrieved chunks directly
                         fallback_parts = [response]
-                        for i, r in enumerate(results, 1):
-                            fallback_parts.append(
-                                f"**{i}. {r['doc_name']}** (Page {r['page']}) - Score: {r['score']:.2f}\n"
-                                f"> {r['text'][:250]}...\n"
-                            )
+                        if compare_mode:
+                            for doc, chunks in results.items():
+                                fallback_parts.append(f"\n📄 **Document: `{doc}`**")
+                                for i, r in enumerate(chunks, 1):
+                                    fallback_parts.append(
+                                        f"**{i}.** (Page {r['page']}) - Score: {r['score']:.2f}\n"
+                                        f"> {r['text'][:250]}...\n"
+                                    )
+                        else:
+                            for i, r in enumerate(results, 1):
+                                fallback_parts.append(
+                                    f"**{i}. {r['doc_name']}** (Page {r['page']}) - Score: {r['score']:.2f}\n"
+                                    f"> {r['text'][:250]}...\n"
+                                )
                         response = "\n".join(fallback_parts)
                         st.markdown(response)
                         
@@ -559,12 +702,8 @@ def main():
                         # ── Feature 4: Multi-Document Comparison Mode Display ──
                         with st.expander("📄 View Retrieved Context", expanded=compare_mode):
                             if compare_mode:
-                                # Group by document
-                                grouped = {}
-                                for r in results:
-                                    grouped.setdefault(r["doc_name"], []).append(r)
-                                
-                                for doc, chunks in grouped.items():
+                                # MODIFY THIS: results is already grouped in compare mode
+                                for doc, chunks in results.items():
                                     st.markdown(f"**Document: `{doc}`**")
                                     for c in chunks:
                                         st.markdown(f"- **Page {c['page']}** (Score: {c['score']:.2f}): {c['text'][:200]}...")
