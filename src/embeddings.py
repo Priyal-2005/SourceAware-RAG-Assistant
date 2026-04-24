@@ -20,51 +20,42 @@ Model choice — all-MiniLM-L6-v2:
   • Runs on CPU without issues
 """
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
-# ── Model identifier on HuggingFace Hub ──
+"""
+embeddings.py — HuggingFace embedding model loading
+"""
+
+import os
+
+# Try modern import first (LangChain new version)
+try:
+    from langchain_huggingface import HuggingFaceEmbeddings
+except ImportError:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+
+
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 
-def load_embedding_model(model_name: str = EMBEDDING_MODEL_NAME):
+def load_embedding_model(model_name: str = EMBEDDING_MODEL_NAME, hf_token: str | None = None):
     """
-    Load and return a HuggingFace embedding model instance.
-
-    Step 1: Download (or load from cache) the model weights.
-    Step 2: Return a LangChain-compatible embeddings object.
-
-    Why we wrap this in a function:
-      The model download can fail (network issues, disk space, etc.).
-      By isolating it here, the caller can handle the error gracefully
-      without crashing the entire app.
-
-    Args:
-        model_name: HuggingFace model identifier. Defaults to MiniLM.
-
-    Returns:
-        HuggingFaceEmbeddings instance, or None on failure.
-
-    Raises:
-        Returns None instead of raising — the UI layer handles the error.
+    Load embedding model with optional HF token support.
+    Works for both local (.env) and Streamlit Cloud (secrets).
     """
+
     try:
+        # Set token ONLY if provided
+        if hf_token:
+            os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_token
+
         embeddings = HuggingFaceEmbeddings(model_name=model_name)
         return embeddings
-    except Exception:
+
+    except Exception as e:
+        print(f"[Embedding Error] {e}")
         return None
 
 
-def embed_text(text: str, embeddings) -> list[float]:
-    """
-    Convert a single text string into an embedding vector.
-
-    This is useful for embedding a user query before searching FAISS.
-
-    Args:
-        text:       The string to embed.
-        embeddings: A loaded HuggingFaceEmbeddings instance.
-
-    Returns:
-        A list of floats (384 dimensions for MiniLM).
-    """
+def embed_text(text: str, embeddings):
+    """Convert text → embedding vector"""
     return embeddings.embed_query(text)

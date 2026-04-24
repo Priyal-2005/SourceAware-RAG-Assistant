@@ -8,6 +8,7 @@ langchain-community>=0.2.0,<0.4.0
 langchain-core>=0.2.0,<0.4.0
 faiss-cpu
 sentence-transformers
+langchain-huggingface>=0.0.3
 
 # Phase 4 — LLM
 groq

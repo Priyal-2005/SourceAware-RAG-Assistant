@@ -88,6 +88,13 @@ def clear_chat():
 # ──────────────────────────────────────────────
 # Sidebar — document management & settings
 # ──────────────────────────────────────────────
+def get_secret(key):
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key)
 
 def get_api_key():
     """Retrieve API key securely from secrets or environment."""
@@ -108,7 +115,6 @@ def render_sidebar():
         # ── Section 1: Documents ──
         st.header("1. 📁 Documents")
         
-        # FIX #1: Add unique key to checkbox to prevent duplicate ID error
         use_sample = st.checkbox("Use sample documents", key="use_sample_docs_checkbox")
         
         uploaded_files = []
@@ -117,7 +123,6 @@ def render_sidebar():
             if not sample_paths:
                 st.warning("⚠️ No sample PDFs found in data/ folder.")
             else:
-                # FIX #5: Only show success if files actually loaded
                 st.success(f"✅ Loaded {len(sample_paths)} sample document(s)")
                 with st.expander("📚 Sample Documents"):
                     for p in sample_paths:
@@ -137,7 +142,7 @@ def render_sidebar():
                 "Upload PDF files",
                 type=["pdf"],
                 accept_multiple_files=True,
-                key="pdf_uploader",  # FIX #1: Add unique key
+                key="pdf_uploader",
             )
 
         st.divider()
@@ -145,7 +150,6 @@ def render_sidebar():
         # ── Section 2: Index ──
         st.header("2. ⚡ Index")
         
-        # FIX #1: Add unique key to button
         if st.button(
             "⚡ Process Documents", 
             type="primary", 
@@ -174,7 +178,6 @@ def render_sidebar():
         # ── Section 3: Settings ──
         st.header("3. ⚙️ Settings")
         
-        # FIX #6: Add warning about re-processing when settings change
         chunk_size = st.slider(
             "Chunk size", 200, 1500, DEFAULT_CHUNK_SIZE, 50,
             help="Characters per chunk. Click 'Process Documents' after changing.",
@@ -195,15 +198,13 @@ def render_sidebar():
 
         # ── Section 4: View Mode & Chat ──
         st.header("4. 🗂️ View Mode")
-        
-        # FIX #1: Add unique key to checkbox
+
         compare_mode = st.checkbox(
             "Compare Across Documents", 
             help="Group retrieved chunks by document",
             key="compare_mode_checkbox"
         )
         
-        # FIX #2: Remove st.rerun() - let Streamlit handle it naturally
         if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat_button"):
             clear_chat()
 
@@ -236,7 +237,6 @@ def render_sidebar():
 
 def process_documents(uploaded_files):
     """Run the full Phase 1→2 pipeline: extract → chunk → embed → index."""
-    # FIX #7: Add error boundary
     try:
         with st.spinner("Extracting text from PDFs..."):
             pages, warnings = extract_text_from_pdfs(uploaded_files)
@@ -258,7 +258,8 @@ def process_documents(uploaded_files):
                 st.sidebar.error("No chunks created.")
                 return
 
-            embeddings = load_embedding_model()
+            hf_token = get_secret("HF_TOKEN")
+            embeddings = load_embedding_model(hf_token=hf_token)
             if not embeddings:
                 st.sidebar.error("Failed to load embedding model.")
                 return
@@ -335,7 +336,8 @@ def main():
     # ── Try loading saved index once ──
     if not st.session_state["index_loaded"]:
         try:
-            embeddings = load_embedding_model()
+            hf_token = get_secret("HF_TOKEN")
+            embeddings = load_embedding_model(hf_token=hf_token)
             if embeddings:
                 saved_store, saved_chunks = load_index(embeddings)
                 if saved_store is not None:
