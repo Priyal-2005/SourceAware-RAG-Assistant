@@ -140,5 +140,5 @@ As Large Language Models become more common in enterprise environments, the risk
 - Multi-modal support (tables/images)
 - Re-ranking models for improved retrieval accuracy
 
-# Deployed Link (Streamlit)
+## 🔗 Deployed Link
 https://sourceaware-rag-assistant.streamlit.app/
